@@ -1,0 +1,355 @@
+<script lang="ts">
+  import { settings, auth } from '@midlight/stores';
+  import type { Theme } from '@midlight/stores';
+  import { authClient } from '$lib/auth';
+  import ThemePreview from './ThemePreview.svelte';
+
+  interface Props {
+    open: boolean;
+    onClose: () => void;
+    onOpenAuthModal?: () => void;
+  }
+
+  let { open, onClose, onOpenAuthModal }: Props = $props();
+  let isLoggingOut = $state(false);
+
+  type Tab = 'appearance' | 'editor' | 'ai' | 'general';
+  let activeTab = $state<Tab>('appearance');
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'appearance', label: 'Appearance' },
+    { id: 'editor', label: 'Editor' },
+    { id: 'ai', label: 'AI' },
+    { id: 'general', label: 'General' },
+  ];
+
+  const themes: Theme[] = ['light', 'dark', 'midnight', 'sepia', 'forest', 'cyberpunk', 'coffee', 'system'];
+
+  const fontSizes = [12, 14, 16, 18, 20, 24];
+  const fontFamilies = [
+    { value: 'Merriweather', label: 'Merriweather' },
+    { value: 'System', label: 'System' },
+    { value: 'Georgia', label: 'Georgia' },
+    { value: 'Arial', label: 'Arial' },
+    { value: 'Times', label: 'Times' },
+    { value: 'Courier', label: 'Courier' },
+  ];
+
+  const autoSaveIntervals = [
+    { value: 1000, label: '1 second' },
+    { value: 2000, label: '2 seconds' },
+    { value: 3000, label: '3 seconds' },
+    { value: 5000, label: '5 seconds' },
+    { value: 10000, label: '10 seconds' },
+  ];
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  }
+
+  function handleBackdropClick() {
+    onClose();
+  }
+
+  function handleModalClick(e: MouseEvent) {
+    e.stopPropagation();
+  }
+</script>
+
+<svelte:window onkeydown={open ? handleKeyDown : undefined} />
+
+{#if open}
+  <!-- Backdrop -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+    onclick={handleBackdropClick}
+  >
+    <!-- Modal -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="bg-card border border-border rounded-lg shadow-xl max-w-4xl w-full h-[600px] flex overflow-hidden"
+      onclick={handleModalClick}
+    >
+      <!-- Sidebar -->
+      <div class="w-64 border-r border-border flex flex-col bg-background">
+        <div class="p-4 border-b border-border">
+          <h2 class="text-lg font-semibold">Settings</h2>
+        </div>
+        <nav class="flex-1 p-2">
+          {#each tabs as tab}
+            <button
+              onclick={() => activeTab = tab.id}
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors
+                     {activeTab === tab.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+            >
+              {#if tab.id === 'appearance'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="13.5" cy="6.5" r="0.5"></circle>
+                  <circle cx="17.5" cy="10.5" r="0.5"></circle>
+                  <circle cx="8.5" cy="7.5" r="0.5"></circle>
+                  <circle cx="6.5" cy="12.5" r="0.5"></circle>
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z"></path>
+                </svg>
+              {:else if tab.id === 'editor'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 7V4h16v3"></path>
+                  <path d="M9 20h6"></path>
+                  <path d="M12 4v16"></path>
+                </svg>
+              {:else if tab.id === 'ai'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 8V4H8"></path>
+                  <rect width="16" height="12" x="4" y="8" rx="2"></rect>
+                  <path d="M2 14h2"></path>
+                  <path d="M20 14h2"></path>
+                  <path d="M15 13v2"></path>
+                  <path d="M9 13v2"></path>
+                </svg>
+              {:else if tab.id === 'general'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              {/if}
+              {tab.label}
+            </button>
+          {/each}
+        </nav>
+      </div>
+
+      <!-- Content -->
+      <div class="flex-1 flex flex-col min-w-0">
+        <div class="p-6 border-b border-border flex justify-between items-center">
+          <h3 class="text-lg font-medium">{tabs.find(t => t.id === activeTab)?.label}</h3>
+          <button
+            onclick={onClose}
+            aria-label="Close settings"
+            class="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"></path>
+              <path d="M6 6 18 18"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6">
+          {#if activeTab === 'appearance'}
+            <!-- Theme Grid -->
+            <div>
+              <h4 class="text-sm font-medium mb-4">Theme</h4>
+              <div class="grid grid-cols-3 gap-4">
+                {#each themes as theme}
+                  <ThemePreview
+                    {theme}
+                    selected={$settings.theme === theme}
+                    onclick={() => settings.setTheme(theme)}
+                  />
+                {/each}
+              </div>
+            </div>
+          {:else if activeTab === 'editor'}
+            <!-- Editor Settings -->
+            <div class="space-y-6">
+              <!-- Font Size -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Font Size</div>
+                  <div class="text-xs text-muted-foreground">Editor text size in pixels</div>
+                </div>
+                <select
+                  value={$settings.fontSize}
+                  onchange={(e) => settings.setFontSize(Number(e.currentTarget.value))}
+                  class="px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {#each fontSizes as size}
+                    <option value={size}>{size}px</option>
+                  {/each}
+                </select>
+              </div>
+
+              <!-- Font Family -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Font Family</div>
+                  <div class="text-xs text-muted-foreground">Primary font for the editor</div>
+                </div>
+                <select
+                  value={$settings.fontFamily}
+                  onchange={(e) => settings.setFontFamily(e.currentTarget.value)}
+                  class="px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {#each fontFamilies as font}
+                    <option value={font.value}>{font.label}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <!-- Spellcheck -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Spellcheck</div>
+                  <div class="text-xs text-muted-foreground">Enable browser spellcheck in the editor</div>
+                </div>
+                <button
+                  onclick={() => settings.setSpellcheck(!$settings.spellcheck)}
+                  role="switch"
+                  aria-checked={$settings.spellcheck}
+                  aria-label="Toggle spellcheck"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.spellcheck ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.spellcheck ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+            </div>
+          {:else if activeTab === 'ai'}
+            <!-- AI Settings -->
+            <div class="space-y-6">
+              <!-- Account Section -->
+              <div class="py-3 border-b border-border">
+                <div class="text-sm font-medium mb-3">Account</div>
+                {#if $auth.isAuthenticated && $auth.user}
+                  <!-- Logged in state -->
+                  <div class="flex items-center gap-3 mb-4">
+                    {#if $auth.user.avatarUrl}
+                      <img
+                        src={$auth.user.avatarUrl}
+                        alt="Avatar"
+                        class="w-10 h-10 rounded-full"
+                      />
+                    {:else}
+                      <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                        <span class="text-primary font-medium">
+                          {$auth.user.displayName?.[0] || $auth.user.email[0].toUpperCase()}
+                        </span>
+                      </div>
+                    {/if}
+                    <div class="flex-1 min-w-0">
+                      {#if $auth.user.displayName}
+                        <div class="text-sm font-medium truncate">{$auth.user.displayName}</div>
+                      {/if}
+                      <div class="text-xs text-muted-foreground truncate">{$auth.user.email}</div>
+                    </div>
+                  </div>
+
+                  <!-- Subscription info -->
+                  {#if $auth.subscription}
+                    <div class="text-xs text-muted-foreground mb-4">
+                      <span class="capitalize">{$auth.subscription.tier}</span> plan
+                      {#if $auth.subscription.status === 'active'}
+                        <span class="text-green-500 ml-1">Active</span>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  <!-- Sign out button -->
+                  <button
+                    onclick={async () => {
+                      isLoggingOut = true;
+                      try {
+                        await authClient.logout();
+                      } finally {
+                        isLoggingOut = false;
+                      }
+                    }}
+                    disabled={isLoggingOut}
+                    class="px-4 py-2 text-sm border border-border rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+                  >
+                    {isLoggingOut ? 'Signing out...' : 'Sign out'}
+                  </button>
+                {:else}
+                  <!-- Logged out state -->
+                  <div class="text-sm text-muted-foreground mb-4">
+                    Sign in to access AI features like chat and document assistance.
+                  </div>
+                  <button
+                    onclick={() => {
+                      onClose();
+                      onOpenAuthModal?.();
+                    }}
+                    class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                  >
+                    Sign in
+                  </button>
+                {/if}
+              </div>
+
+              <div class="py-3">
+                <p class="text-xs text-muted-foreground">
+                  Your session is stored locally and used to authenticate AI requests through the Midlight service.
+                </p>
+              </div>
+            </div>
+          {:else if activeTab === 'general'}
+            <!-- General Settings -->
+            <div class="space-y-6">
+              <!-- Auto-save -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Auto-save</div>
+                  <div class="text-xs text-muted-foreground">Automatically save documents as you type</div>
+                </div>
+                <button
+                  onclick={() => settings.setAutoSave(!$settings.autoSave)}
+                  role="switch"
+                  aria-checked={$settings.autoSave}
+                  aria-label="Toggle auto-save"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.autoSave ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.autoSave ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              <!-- Auto-save Interval -->
+              {#if $settings.autoSave}
+                <div class="flex items-center justify-between py-3 border-b border-border">
+                  <div>
+                    <div class="text-sm font-medium">Auto-save Interval</div>
+                    <div class="text-xs text-muted-foreground">How often to save changes</div>
+                  </div>
+                  <select
+                    value={$settings.autoSaveInterval}
+                    onchange={(e) => settings.setAutoSaveInterval(Number(e.currentTarget.value))}
+                    class="px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {#each autoSaveIntervals as interval}
+                      <option value={interval.value}>{interval.label}</option>
+                    {/each}
+                  </select>
+                </div>
+              {/if}
+
+              <!-- Error Reporting -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Error Reporting</div>
+                  <div class="text-xs text-muted-foreground">Send anonymous error reports to help improve the app</div>
+                </div>
+                <button
+                  onclick={() => settings.setErrorReportingEnabled(!$settings.errorReportingEnabled)}
+                  role="switch"
+                  aria-checked={$settings.errorReportingEnabled}
+                  aria-label="Toggle error reporting"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.errorReportingEnabled ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.errorReportingEnabled ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}

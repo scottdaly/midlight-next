@@ -1,0 +1,763 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+
+    /* Selection Colors */
+    --selection-background: 212 96% 87%;
+    --selection-foreground: 222.2 47.4% 11.2%;
+
+    /* Browser Selection (Sidebar) */
+    --browser-selection: 212 80% 92%;
+
+    /* Node Selection (Images) */
+    --image-border: 221.2 83.2% 53.3%;
+
+    /* File Icon Colors */
+    --file-icon-bg: 0 0% 85%;
+    --file-icon-bg-dark: 0 0% 78%;
+    --file-icon-fold: 0 0% 66%;
+    --file-icon-fold-dark: 0 0% 45%;
+
+    /* Folder Icon Colors - Light blue tint */
+    --folder-icon-back: 197 55% 84%;
+    --folder-icon-back-dark: 205 35% 62%;
+    --folder-icon-front: 190 85% 82%;
+    --folder-icon-front-dark: 208 52% 71%;
+
+    /* Canvas (editor background) */
+    --canvas: 210 40% 94%;
+
+    /* Page dimensions */
+    --page-width: 816px;
+    --page-height: 1056px;
+    --page-padding: 48px;
+    --page-gap: 32px;
+  }
+
+  .dark {
+    --background: 240 3.7% 15.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 3.7% 15.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 3.7% 15.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 10% 3.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 10% 3.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 10% 3.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 22%;
+    --input: 240 4% 22%;
+    --ring: 240 4.9% 83.9%;
+
+    --selection-background: 0 0% 35%;
+    --selection-foreground: 0 0% 100%;
+    --browser-selection: 215 50% 35%;
+    --image-border: 217 91% 60%;
+
+    /* File Icon Colors - Dark */
+    --file-icon-bg: 240 5% 60%;
+    --file-icon-bg-dark: 240 5% 50%;
+    --file-icon-fold: 240 5% 70%;
+    --file-icon-fold-dark: 240 5% 40%;
+
+    /* Folder Icon Colors - Dark - Blue tint */
+    --folder-icon-back: 205 50% 45%;
+    --folder-icon-back-dark: 215 40% 32%;
+    --folder-icon-front: 200 55% 52%;
+    --folder-icon-front-dark: 210 45% 40%;
+
+    /* Canvas (editor background) */
+    --canvas: 240 5% 12%;
+  }
+
+  .midnight {
+    --background: 217 33% 17%;
+    --foreground: 210 40% 98%;
+    --card: 217 33% 17%;
+    --card-foreground: 210 40% 98%;
+    --popover: 217 33% 17%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 222 47% 11%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 222 47% 11%;
+    --muted-foreground: 215 20% 80%;
+    --accent: 222 47% 11%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 212.7 26.8% 83.9%;
+
+    --selection-background: 222 60% 30%;
+    --selection-foreground: 210 40% 98%;
+    --browser-selection: 215 55% 32%;
+    --image-border: 217 91% 60%;
+
+    /* File Icon Colors - Midnight */
+    --file-icon-bg: 217 30% 42%;
+    --file-icon-bg-dark: 217 30% 34%;
+    --file-icon-fold: 217 25% 52%;
+    --file-icon-fold-dark: 217 25% 28%;
+
+    /* Folder Icon Colors - Midnight - Brighter blue */
+    --folder-icon-back: 205 55% 48%;
+    --folder-icon-back-dark: 215 48% 35%;
+    --folder-icon-front: 200 60% 55%;
+    --folder-icon-front-dark: 210 50% 42%;
+
+    /* Canvas (editor background) */
+    --canvas: 222 47% 9%;
+  }
+
+  .sepia {
+    --background: 40 23% 95%;
+    --foreground: 20 14% 12%;
+    --card: 40 23% 95%;
+    --card-foreground: 20 14% 12%;
+    --popover: 40 23% 95%;
+    --popover-foreground: 20 14% 12%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 60 9.1% 97.8%;
+    --secondary: 40 20% 90%;
+    --secondary-foreground: 24 9.8% 10%;
+    --muted: 40 20% 90%;
+    --muted-foreground: 25 5.3% 45%;
+    --accent: 40 25% 80%;
+    --accent-foreground: 20 14% 12%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+    --border: 30 10% 85%;
+    --input: 30 10% 85%;
+    --ring: 24.6 95% 53.1%;
+
+    --selection-background: 35 60% 85%;
+    --selection-foreground: 20 14% 12%;
+    --browser-selection: 35 50% 85%;
+    --image-border: 24 95% 53%;
+
+    /* File Icon Colors - Sepia */
+    --file-icon-bg: 35 20% 82%;
+    --file-icon-bg-dark: 35 20% 74%;
+    --file-icon-fold: 35 18% 62%;
+    --file-icon-fold-dark: 35 15% 42%;
+
+    /* Folder Icon Colors - Sepia - Warm amber tint */
+    --folder-icon-back: 38 55% 75%;
+    --folder-icon-back-dark: 32 48% 58%;
+    --folder-icon-front: 42 65% 78%;
+    --folder-icon-front-dark: 35 52% 65%;
+
+    /* Canvas (editor background) */
+    --canvas: 40 18% 88%;
+  }
+
+  .forest {
+    --background: 150 30% 12%;
+    --foreground: 150 40% 98%;
+    --card: 150 30% 12%;
+    --card-foreground: 150 40% 98%;
+    --popover: 150 30% 12%;
+    --popover-foreground: 150 40% 98%;
+    --primary: 142 76% 36%;
+    --primary-foreground: 150 40% 98%;
+    --secondary: 150 20% 18%;
+    --secondary-foreground: 150 40% 98%;
+    --muted: 150 20% 18%;
+    --muted-foreground: 150 20% 70%;
+    --accent: 150 20% 18%;
+    --accent-foreground: 150 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 150 40% 98%;
+    --border: 150 20% 22%;
+    --input: 150 20% 22%;
+    --ring: 142 76% 36%;
+
+    --selection-background: 150 40% 30%;
+    --selection-foreground: 150 40% 98%;
+    --browser-selection: 150 40% 28%;
+    --image-border: 142 76% 36%;
+
+    /* File Icon Colors - Forest */
+    --file-icon-bg: 150 20% 38%;
+    --file-icon-bg-dark: 150 20% 30%;
+    --file-icon-fold: 150 18% 48%;
+    --file-icon-fold-dark: 150 15% 24%;
+
+    /* Folder Icon Colors - Forest - Green tint */
+    --folder-icon-back: 145 50% 42%;
+    --folder-icon-back-dark: 155 45% 30%;
+    --folder-icon-front: 140 55% 50%;
+    --folder-icon-front-dark: 150 48% 38%;
+
+    /* Canvas (editor background) */
+    --canvas: 150 20% 9%;
+  }
+
+  .cyberpunk {
+    --background: 265 50% 10%;
+    --foreground: 280 80% 95%;
+    --card: 265 50% 10%;
+    --card-foreground: 280 80% 95%;
+    --popover: 265 50% 10%;
+    --popover-foreground: 280 80% 95%;
+    --primary: 310 90% 65%; /* Hot Pink */
+    --primary-foreground: 265 50% 10%;
+    --secondary: 265 40% 20%;
+    --secondary-foreground: 280 80% 95%;
+    --muted: 265 40% 20%;
+    --muted-foreground: 265 30% 70%;
+    --accent: 180 90% 65%; /* Cyan */
+    --accent-foreground: 265 50% 10%;
+    --destructive: 0 90% 60%;
+    --destructive-foreground: 280 80% 95%;
+    --border: 265 40% 30%;
+    --input: 265 40% 30%;
+    --ring: 310 90% 65%;
+
+    --selection-background: 310 80% 40%;
+    --selection-foreground: 280 80% 95%;
+    --browser-selection: 290 50% 30%;
+    --image-border: 310 90% 65%;
+
+    /* File Icon Colors - Cyberpunk */
+    --file-icon-bg: 265 35% 38%;
+    --file-icon-bg-dark: 265 35% 28%;
+    --file-icon-fold: 280 40% 48%;
+    --file-icon-fold-dark: 265 30% 22%;
+
+    /* Folder Icon Colors - Cyberpunk - Cyan/pink neon */
+    --folder-icon-back: 185 75% 50%;
+    --folder-icon-back-dark: 290 55% 42%;
+    --folder-icon-front: 180 85% 58%;
+    --folder-icon-front-dark: 300 60% 50%;
+
+    /* Canvas (editor background) */
+    --canvas: 265 40% 7%;
+  }
+
+  .coffee {
+    --background: 30 25% 94%;
+    --foreground: 25 20% 25%;
+    --card: 30 25% 94%;
+    --card-foreground: 25 20% 25%;
+    --popover: 30 25% 94%;
+    --popover-foreground: 25 20% 25%;
+    --primary: 25 40% 40%;
+    --primary-foreground: 30 30% 96%;
+    --secondary: 30 20% 88%;
+    --secondary-foreground: 25 20% 25%;
+    --muted: 30 20% 88%;
+    --muted-foreground: 25 10% 50%;
+    --accent: 30 20% 88%;
+    --accent-foreground: 25 20% 25%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 30 30% 96%;
+    --border: 25 15% 82%;
+    --input: 25 15% 82%;
+    --ring: 25 40% 40%;
+
+    --selection-background: 25 40% 80%;
+    --selection-foreground: 25 20% 25%;
+    --browser-selection: 30 35% 82%;
+    --image-border: 25 40% 40%;
+
+    /* File Icon Colors - Coffee */
+    --file-icon-bg: 30 18% 82%;
+    --file-icon-bg-dark: 30 18% 74%;
+    --file-icon-fold: 28 15% 62%;
+    --file-icon-fold-dark: 28 12% 42%;
+
+    /* Folder Icon Colors - Coffee - Warm brown tint */
+    --folder-icon-back: 30 52% 65%;
+    --folder-icon-back-dark: 26 45% 50%;
+    --folder-icon-front: 34 58% 72%;
+    --folder-icon-front-dark: 28 48% 58%;
+
+    /* Canvas (editor background) */
+    --canvas: 30 18% 88%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  .ProseMirror {
+    caret-color: hsl(var(--primary));
+  }
+
+  /* Default selection for non-editor content */
+  ::selection {
+    background-color: hsl(var(--selection-background));
+    color: hsl(var(--selection-foreground));
+  }
+  ::-moz-selection {
+    background-color: hsl(var(--selection-background));
+    color: hsl(var(--selection-foreground));
+  }
+}
+
+/* Tiptap editor styles */
+.tiptap {
+  @apply outline-none;
+}
+
+.tiptap p {
+  @apply my-2;
+}
+
+.tiptap h1 {
+  @apply text-3xl font-bold my-4;
+}
+
+.tiptap h2 {
+  @apply text-2xl font-bold my-3;
+}
+
+.tiptap h3 {
+  @apply text-xl font-bold my-2;
+}
+
+.tiptap ul {
+  @apply list-disc list-inside my-2;
+}
+
+.tiptap ol {
+  @apply list-decimal list-inside my-2;
+}
+
+.tiptap blockquote {
+  @apply border-l-4 border-muted-foreground/30 pl-4 italic my-4;
+}
+
+.tiptap code {
+  @apply bg-muted px-1 py-0.5 rounded text-sm font-mono;
+}
+
+.tiptap pre {
+  @apply bg-muted p-4 rounded-lg my-4 overflow-x-auto;
+}
+
+.tiptap pre code {
+  @apply bg-transparent p-0;
+}
+
+.tiptap img {
+  @apply max-w-full h-auto rounded-lg my-4;
+}
+
+.tiptap hr {
+  @apply my-6 border-border;
+}
+
+.tiptap a {
+  @apply text-primary underline;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  @apply text-muted-foreground pointer-events-none float-left h-0;
+  content: attr(data-placeholder);
+}
+
+/* Custom Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ProseMirror Selection - Balanced overlay that preserves text colors */
+.ProseMirror ::selection {
+  background-color: rgba(100, 149, 237, 0.20) !important;
+  color: inherit !important;
+}
+
+.ProseMirror ::-moz-selection {
+  background-color: rgba(100, 149, 237, 0.20) !important;
+  color: inherit !important;
+}
+
+.ProseMirror p ::selection,
+.ProseMirror h1 ::selection,
+.ProseMirror h2 ::selection,
+.ProseMirror h3 ::selection,
+.ProseMirror span ::selection,
+.ProseMirror mark ::selection {
+  background-color: rgba(100, 149, 237, 0.20) !important;
+  color: inherit !important;
+}
+
+.ProseMirror p ::-moz-selection,
+.ProseMirror h1 ::-moz-selection,
+.ProseMirror h2 ::-moz-selection,
+.ProseMirror h3 ::-moz-selection,
+.ProseMirror span ::-moz-selection,
+.ProseMirror mark ::-moz-selection {
+  background-color: rgba(100, 149, 237, 0.20) !important;
+  color: inherit !important;
+}
+
+/* Tiptap Gapcursor Styles */
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ProseMirror-gapcursor:after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+  border-top: 2px solid hsl(var(--primary));
+  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
+/* Horizontal rule wrapper styles */
+.ProseMirror .hr-wrapper {
+  padding: 0.75em 0;
+  margin: 0.75em 0;
+  cursor: pointer;
+}
+
+.ProseMirror .hr-wrapper hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 0;
+  pointer-events: none;
+}
+
+.ProseMirror .hr-wrapper.ProseMirror-selectednode {
+  outline: none;
+}
+
+.ProseMirror .hr-wrapper.ProseMirror-selectednode hr {
+  border-top: 2px solid hsl(var(--primary));
+  outline: 2px solid hsl(var(--primary) / 0.3);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Node selection indicator for images */
+.ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid hsl(var(--primary) / 0.5);
+  outline-offset: 2px;
+}
+
+/* Table Styles */
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5em 0.75em;
+  min-width: 100px;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.ProseMirror th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+  text-align: left;
+}
+
+.ProseMirror td > *,
+.ProseMirror th > * {
+  margin: 0;
+}
+
+.ProseMirror .selectedCell:after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: hsl(var(--primary) / 0.1);
+  pointer-events: none;
+}
+
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: hsl(var(--primary));
+  pointer-events: none;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Prose overrides for dark themes */
+.midnight .prose-neutral,
+.forest .prose-neutral,
+.cyberpunk .prose-neutral {
+  --tw-prose-body: hsl(var(--foreground)) !important;
+  --tw-prose-headings: hsl(var(--foreground)) !important;
+  --tw-prose-lead: hsl(var(--muted-foreground)) !important;
+  --tw-prose-bold: hsl(var(--foreground)) !important;
+  --tw-prose-code: hsl(var(--foreground)) !important;
+  --tw-prose-code-bg: hsl(var(--secondary)) !important;
+  --tw-prose-pre-code: hsl(var(--foreground)) !important;
+  --tw-prose-pre-bg: hsl(var(--secondary)) !important;
+  --tw-prose-blockquote: hsl(var(--foreground)) !important;
+  --tw-prose-quote-borders: hsl(var(--border)) !important;
+  --tw-prose-hr: hsl(var(--border)) !important;
+  --tw-prose-links: hsl(var(--primary)) !important;
+  --tw-prose-counters: hsl(var(--muted-foreground)) !important;
+  --tw-prose-bullets: hsl(var(--muted-foreground)) !important;
+}
+
+.sepia .prose-neutral {
+  --tw-prose-body: hsl(var(--foreground)) !important;
+  --tw-prose-headings: hsl(var(--foreground)) !important;
+  --tw-prose-lead: hsl(var(--muted-foreground)) !important;
+  --tw-prose-bold: hsl(var(--foreground)) !important;
+  --tw-prose-code: hsl(var(--foreground)) !important;
+  --tw-prose-code-bg: hsl(var(--secondary)) !important;
+  --tw-prose-pre-code: hsl(var(--foreground)) !important;
+  --tw-prose-pre-bg: hsl(var(--secondary)) !important;
+  --tw-prose-blockquote: hsl(var(--muted-foreground)) !important;
+  --tw-prose-quote-borders: hsl(var(--border)) !important;
+  --tw-prose-hr: hsl(var(--border)) !important;
+  --tw-prose-links: hsl(var(--primary)) !important;
+  --tw-prose-counters: hsl(var(--muted-foreground)) !important;
+  --tw-prose-bullets: hsl(var(--muted-foreground)) !important;
+}
+
+.cyberpunk .prose-neutral {
+  --tw-prose-bold: hsl(var(--primary)) !important;
+  --tw-prose-code: hsl(var(--accent)) !important;
+  --tw-prose-quote-borders: hsl(var(--accent)) !important;
+  --tw-prose-hr: hsl(var(--accent)) !important;
+  --tw-prose-links: hsl(var(--accent)) !important;
+  --tw-prose-counters: hsl(var(--primary)) !important;
+  --tw-prose-bullets: hsl(var(--primary)) !important;
+}
+
+/* Direct selector overrides for blockquotes in dark themes */
+.midnight .prose blockquote,
+.forest .prose blockquote,
+.cyberpunk .prose blockquote {
+  color: hsl(var(--foreground)) !important;
+  opacity: 0.9 !important;
+  border-left-color: hsl(var(--border)) !important;
+}
+
+/* Ensure code blocks in dark themes are readable */
+.midnight .prose pre,
+.forest .prose pre,
+.cyberpunk .prose pre {
+  background-color: hsl(var(--secondary)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Nested Ordered List Styles - Progressive numbering */
+.prose ol {
+  list-style-type: decimal;
+}
+.prose ol ol {
+  list-style-type: lower-alpha;
+}
+.prose ol ol ol {
+  list-style-type: lower-roman;
+}
+.prose ol ol ol ol {
+  list-style-type: decimal;
+}
+.prose ol ol ol ol ol {
+  list-style-type: lower-alpha;
+}
+.prose ol ol ol ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/* Editor Page Mode Styles */
+.editor-continuous {
+  contain: layout style paint;
+}
+
+.editor-continuous .ProseMirror {
+  outline: none;
+  max-width: none;
+  width: 100%;
+  contain: layout style paint;
+}
+
+.paginated-editor-container {
+  min-width: fit-content;
+}
+
+.page-container {
+  position: relative;
+  width: var(--page-width);
+  min-height: var(--page-height);
+  background: hsl(var(--background));
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  border-radius: 6px;
+  padding: var(--page-padding);
+}
+
+.paginated-editor-content .ProseMirror {
+  outline: none;
+  width: calc(var(--page-width) - var(--page-padding) * 2);
+  min-height: calc(var(--page-height) - var(--page-padding) * 2);
+  max-width: none;
+}
+
+.cloned-content .ProseMirror,
+.cloned-content .editor-clone {
+  outline: none;
+  width: calc(var(--page-width) - var(--page-padding) * 2);
+  max-width: none;
+}
+
+.editor-clone.ProseMirror {
+  outline: none;
+}
+
+/* Agent Progress Indicator Animation */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+/* Print Media */
+@media print {
+  .draggable, .border-r, .border-b, button, .fixed {
+    display: none !important;
+  }
+
+  .w-64 {
+    display: none !important;
+  }
+
+  .flex-1, .h-full, .h-screen, .overflow-hidden, .overflow-y-auto {
+    height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+    flex: none !important;
+  }
+
+  body, .prose {
+    background: white !important;
+    color: black !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .prose {
+    --tw-prose-body: black !important;
+    --tw-prose-headings: black !important;
+    --tw-prose-lead: black !important;
+    --tw-prose-bold: black !important;
+    --tw-prose-links: black !important;
+    --tw-prose-code: black !important;
+    --tw-prose-quotes: black !important;
+  }
+}
