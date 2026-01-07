@@ -59,6 +59,39 @@ struct UsageResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Price {
+    pub id: String,
+    pub product_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub amount: u32,
+    pub currency: String,
+    pub interval: String,
+    pub features: Option<Vec<String>>,
+}
+
+// API response wrapper for prices endpoint
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PricesResponse {
+    prices: Vec<Price>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutSession {
+    pub url: String,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalSession {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthResponse {
     pub user: User,
     pub access_token: String,
@@ -589,6 +622,201 @@ impl AuthService {
         })?;
 
         Ok(wrapper.quota)
+    }
+
+    /// Get available subscription prices
+    pub async fn get_prices(&self) -> Result<Vec<Price>, AuthError> {
+        let url = format!("{}/api/subscription/prices", self.base_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        let wrapper: PricesResponse = response.json().await.map_err(|e| AuthError {
+            code: "PARSE_ERROR".to_string(),
+            message: format!("error decoding response body: {}", e),
+        })?;
+
+        Ok(wrapper.prices)
+    }
+
+    /// Create Stripe checkout session
+    pub async fn create_checkout_session(&self, price_id: &str) -> Result<CheckoutSession, AuthError> {
+        let url = format!("{}/api/subscription/checkout", self.base_url);
+
+        let token = self.get_access_token().await.ok_or_else(|| AuthError {
+            code: "NOT_AUTHENTICATED".to_string(),
+            message: "No valid access token".to_string(),
+        })?;
+
+        let body = serde_json::json!({ "priceId": price_id });
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        response.json().await.map_err(|e| AuthError {
+            code: "PARSE_ERROR".to_string(),
+            message: format!("error decoding response body: {}", e),
+        })
+    }
+
+    /// Create Stripe billing portal session
+    pub async fn create_portal_session(&self) -> Result<PortalSession, AuthError> {
+        let url = format!("{}/api/subscription/portal", self.base_url);
+
+        let token = self.get_access_token().await.ok_or_else(|| AuthError {
+            code: "NOT_AUTHENTICATED".to_string(),
+            message: "No valid access token".to_string(),
+        })?;
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        response.json().await.map_err(|e| AuthError {
+            code: "PARSE_ERROR".to_string(),
+            message: format!("error decoding response body: {}", e),
+        })
+    }
+
+    /// Request password reset email
+    pub async fn forgot_password(&self, email: &str) -> Result<(), AuthError> {
+        let url = format!("{}/api/auth/forgot-password", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({ "email": email }))
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        info!("Password reset email sent to {}", email);
+        Ok(())
+    }
+
+    /// Reset password with token from email
+    pub async fn reset_password(&self, token: &str, new_password: &str) -> Result<(), AuthError> {
+        let url = format!("{}/api/auth/reset-password", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({
+                "token": token,
+                "password": new_password
+            }))
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        info!("Password reset successful");
+        Ok(())
+    }
+
+    /// Update user profile (email, display name, password)
+    pub async fn update_profile(
+        &self,
+        email: Option<&str>,
+        display_name: Option<&str>,
+        current_password: Option<&str>,
+        new_password: Option<&str>,
+    ) -> Result<User, AuthError> {
+        let url = format!("{}/api/user/profile", self.base_url);
+
+        let token = self.get_access_token().await.ok_or_else(|| AuthError {
+            code: "NOT_AUTHENTICATED".to_string(),
+            message: "No valid access token".to_string(),
+        })?;
+
+        let mut body = serde_json::Map::new();
+        if let Some(e) = email {
+            body.insert("email".to_string(), serde_json::json!(e));
+        }
+        if let Some(dn) = display_name {
+            body.insert("displayName".to_string(), serde_json::json!(dn));
+        }
+        if let Some(cp) = current_password {
+            body.insert("currentPassword".to_string(), serde_json::json!(cp));
+        }
+        if let Some(np) = new_password {
+            body.insert("newPassword".to_string(), serde_json::json!(np));
+        }
+
+        let response = self
+            .client
+            .patch(&url)
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AuthError {
+                code: "NETWORK_ERROR".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(self.parse_error_response(response).await);
+        }
+
+        let user: User = response.json().await.map_err(|e| AuthError {
+            code: "PARSE_ERROR".to_string(),
+            message: format!("error decoding response body: {}", e),
+        })?;
+
+        // Update stored user
+        *self.user.write().unwrap() = Some(user.clone());
+
+        info!("Profile updated successfully");
+        Ok(user)
     }
 
     /// Check if user is authenticated

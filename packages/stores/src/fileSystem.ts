@@ -7,7 +7,7 @@ import type {
   StorageAdapter,
   CheckpointTrigger,
 } from '@midlight/core/types';
-import { createMergedDiffDocument } from './utils/diff.js';
+import { createMergedDiffDocument, computeChangeRanges } from './utils/diff.js';
 
 export interface PendingDiff {
   changeId: string;
@@ -22,6 +22,12 @@ export interface PendingNewItem {
   defaultName: string;
 }
 
+export interface ChangeRange {
+  from: number;
+  to: number;
+  type: 'insert' | 'replace';
+}
+
 export interface StagedEdit {
   changeId: string;
   path: string;
@@ -31,6 +37,11 @@ export interface StagedEdit {
   newText: string;
   description?: string;
   createdAt: string;
+  // Context for AI annotations
+  conversationId?: string;
+  messageId?: string;
+  // Pre-computed change ranges for annotation application
+  changeRanges?: ChangeRange[];
 }
 
 export interface FileSystemState {
@@ -595,9 +606,15 @@ function createFileSystemStore() {
         edit.stagedTiptapJson as Parameters<typeof createMergedDiffDocument>[0]
       );
 
+      // Compute change ranges for annotation application after accept
+      const changeRanges = computeChangeRanges(edit.originalText, edit.newText);
+
       update((s) => ({
         ...s,
-        stagedEdit: edit,
+        stagedEdit: {
+          ...edit,
+          changeRanges,
+        },
         // Update editor content to show the merged diff view
         editorContent: mergedDiffDoc as TiptapDocument,
         contentRevision: s.contentRevision + 1,
@@ -606,11 +623,12 @@ function createFileSystemStore() {
 
     /**
      * Accepts the staged edit - writes to disk and clears staged state
+     * Returns the staged edit info for annotation application
      */
-    async acceptStagedEdit() {
+    async acceptStagedEdit(): Promise<StagedEdit | null> {
       const state = get({ subscribe });
       const staged = state.stagedEdit;
-      if (!staged || !storageAdapter || !state.rootDir) return;
+      if (!staged || !storageAdapter || !state.rootDir) return null;
 
       try {
         // Write the staged content to disk
@@ -620,6 +638,9 @@ function createFileSystemStore() {
           staged.stagedTiptapJson,
           'manual'
         );
+
+        // Capture staged info before clearing (for annotation application)
+        const stagedInfo = { ...staged };
 
         // Clear staged state and keep the new content
         update((s) => ({
@@ -632,6 +653,9 @@ function createFileSystemStore() {
 
         // Refresh file tree
         await this.refresh();
+
+        // Return the staged edit info for annotation application
+        return stagedInfo;
       } catch (error) {
         console.error('Failed to accept staged edit:', error);
         throw error;

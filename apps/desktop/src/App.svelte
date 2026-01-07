@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth } from '@midlight/stores';
   import { TauriStorageAdapter } from '$lib/tauri';
   import { createTauriLLMClient } from '$lib/llm';
@@ -11,16 +12,27 @@
   import Toolbar from '$lib/components/Toolbar.svelte';
   import Editor from '$lib/components/Editor.svelte';
   import RightSidebar from '$lib/components/RightSidebar.svelte';
+  import TitleBar from '$lib/components/TitleBar.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
   import AuthModal from '$lib/components/AuthModal.svelte';
+  import UpgradeModal from '$lib/components/UpgradeModal.svelte';
 
   let initialized = $state(false);
   let sidebarWidth = $state(240);
   let rightSidebarWidth = $state(320);
   let showAuthModal = $state(false);
+  let showUpgradeModal = $state(false);
 
   const ALL_THEMES = ['light', 'dark', 'midnight', 'sepia', 'forest', 'cyberpunk', 'coffee'];
   const DARK_THEMES = ['dark', 'midnight', 'forest', 'cyberpunk'];
+
+  // Windows-specific setup
+  $effect(() => {
+    if (navigator.userAgent.includes('Windows')) {
+      const win = getCurrentWindow();
+      win.setDecorations(false);
+    }
+  });
 
   onMount(() => {
     // Apply theme
@@ -86,9 +98,14 @@
       initialized = true;
     })();
 
+    // Listen for menu actions
+    const handleMenuAction = () => openFolder();
+    window.addEventListener('midlight:open-workspace', handleMenuAction);
+
     return () => {
       unsubscribe();
       stopAuthEventListeners();
+      window.removeEventListener('midlight:open-workspace', handleMenuAction);
     };
   });
 
@@ -125,6 +142,7 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="h-screen flex flex-col overflow-hidden bg-background text-foreground">
+  <TitleBar />
   {#if !initialized}
     <div class="flex items-center justify-center h-full">
       <div class="text-center space-y-4">
@@ -186,10 +204,17 @@
   open={$settings.isOpen}
   onClose={() => settings.close()}
   onOpenAuthModal={() => showAuthModal = true}
+  onOpenUpgradeModal={() => showUpgradeModal = true}
 />
 
 <!-- Auth Modal -->
 <AuthModal
   open={showAuthModal}
   onClose={() => showAuthModal = false}
+/>
+
+<!-- Upgrade Modal -->
+<UpgradeModal
+  open={showUpgradeModal}
+  onClose={() => showUpgradeModal = false}
 />

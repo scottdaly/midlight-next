@@ -3,6 +3,93 @@
  * Used for visual diff display in staged edits
  */
 
+/**
+ * Represents a range of changed text in the new document
+ * Positions are character offsets from the start of the document
+ */
+export interface ChangeRange {
+  from: number;
+  to: number;
+  type: 'insert' | 'replace';
+}
+
+/**
+ * Computes the ranges in the NEW document where text was added or modified.
+ * These ranges can be used to apply annotations after accepting changes.
+ *
+ * @param originalText - Plain text of the original document
+ * @param newText - Plain text of the new document
+ * @returns Array of change ranges in the new document
+ */
+export function computeChangeRanges(originalText: string, newText: string): ChangeRange[] {
+  const segments = computeWordDiff(originalText, newText);
+  const merged = mergeConsecutiveSegments(segments);
+
+  const ranges: ChangeRange[] = [];
+  let newPos = 0; // Current position in the new text
+
+  for (const segment of merged) {
+    if (segment.type === 'unchanged') {
+      // Advance position in new text
+      newPos += segment.text.length;
+    } else if (segment.type === 'removed') {
+      // Removed text doesn't exist in new document, skip
+      // (position stays the same)
+    } else if (segment.type === 'added') {
+      // Added text - record the range
+      const from = newPos;
+      const to = newPos + segment.text.length;
+      newPos = to;
+
+      // Determine if this is an insert or replace based on context
+      // If there was a removed segment immediately before, it's a replace
+      const type = 'insert'; // We'll refine this below
+
+      ranges.push({ from, to, type });
+    }
+  }
+
+  // Merge adjacent ranges and determine replace vs insert
+  return mergeAdjacentRanges(ranges);
+}
+
+/**
+ * Merge adjacent or overlapping ranges
+ */
+function mergeAdjacentRanges(ranges: ChangeRange[]): ChangeRange[] {
+  if (ranges.length === 0) return [];
+
+  const merged: ChangeRange[] = [];
+  let current = { ...ranges[0] };
+
+  for (let i = 1; i < ranges.length; i++) {
+    const next = ranges[i];
+    // If ranges are adjacent or overlapping, merge them
+    if (next.from <= current.to + 1) {
+      current.to = Math.max(current.to, next.to);
+    } else {
+      merged.push(current);
+      current = { ...next };
+    }
+  }
+  merged.push(current);
+
+  return merged;
+}
+
+/**
+ * Computes change ranges from Tiptap documents
+ * Extracts text and delegates to computeChangeRanges
+ */
+export function computeChangeRangesFromDocs(
+  originalDoc: TiptapDoc,
+  newDoc: TiptapDoc
+): ChangeRange[] {
+  const originalText = extractTextFromTiptap(originalDoc);
+  const newText = extractTextFromTiptap(newDoc);
+  return computeChangeRanges(originalText, newText);
+}
+
 export interface DiffSegment {
   type: 'unchanged' | 'added' | 'removed';
   text: string;

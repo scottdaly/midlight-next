@@ -31,6 +31,16 @@ export type { ToolExecutor, ContextItem, InlineEditState } from './ai.js';
 export { versions, selectedVersion } from './versions.js';
 export { auth, isAuthenticated, currentUser } from './auth.js';
 export type { User, Subscription, Quota, AuthState } from './auth.js';
+export {
+  subscription,
+  isFreeTier,
+  quotaPercentUsed,
+  isQuotaExceeded,
+  showQuotaWarning,
+  quotaWarningSeverity,
+  quotaDisplay,
+} from './subscription.js';
+export type { SubscriptionStatus, QuotaInfo, Price, SubscriptionState } from './subscription.js';
 export { settings } from './settings.js';
 export type { Theme, SettingsState } from './settings.js';
 export { ui, rightPanelMode, isRightPanelOpen, leftSidebarOpen } from './ui.js';

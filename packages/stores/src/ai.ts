@@ -1,5 +1,9 @@
 // @midlight/stores/ai - AI chat state management
 
+// Agent timeout constants (matching Electron app)
+const AGENT_TOTAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes total
+const AGENT_LLM_CALL_TIMEOUT_MS = 60 * 1000; // 60 seconds per LLM call
+
 import { writable, derived, get } from 'svelte/store';
 import type { Message, Conversation, ToolAction, DocumentChange, ThinkingStep, ThinkingStepIcon } from '@midlight/core/types';
 import { generateId } from '@midlight/core/utils';
@@ -549,9 +553,22 @@ IMPORTANT INSTRUCTIONS:
         let continueLoop = true;
         let messages = buildMessages();
         let iterations = 0;
+        const startTime = Date.now();
 
         while (continueLoop) {
           iterations++;
+
+          // Check total timeout
+          if (Date.now() - startTime > AGENT_TOTAL_TIMEOUT_MS) {
+            console.warn('[Agent] Total timeout reached, stopping loop');
+            this.updateMessage(assistantMessageId!, {
+              content: accumulatedContent + '\n\n*Agent execution timed out after 5 minutes. Please continue with a new message if needed.*',
+              toolActions: toolActions.length > 0 ? [...toolActions] : undefined,
+              documentChanges: documentChanges.length > 0 ? [...documentChanges] : undefined,
+              thinkingSteps: thinkingSteps.length > 0 ? [...thinkingSteps] : undefined,
+            });
+            break;
+          }
 
           // Safety limit to prevent infinite loops
           if (iterations > MAX_ITERATIONS) {
@@ -580,16 +597,23 @@ IMPORTANT INSTRUCTIONS:
             hasToolCalls: !!(m as any).toolCalls?.length,
             toolCallId: (m as any).toolCallId,
           })));
-          const response = await llmClient.chatWithTools({
-            provider: state.selectedProvider,
-            model: state.selectedModel,
-            messages,
-            temperature: state.temperature,
-            requestType: 'agent',
-            webSearchEnabled: state.webSearchEnabled,
-            tools: allAgentTools,
-            toolChoice: 'auto',
-          });
+
+          // Wrap LLM call with per-call timeout
+          const response = await Promise.race([
+            llmClient.chatWithTools({
+              provider: state.selectedProvider,
+              model: state.selectedModel,
+              messages,
+              temperature: state.temperature,
+              requestType: 'agent',
+              webSearchEnabled: state.webSearchEnabled,
+              tools: allAgentTools,
+              toolChoice: 'auto',
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('LLM request timed out after 60 seconds')), AGENT_LLM_CALL_TIMEOUT_MS)
+            ),
+          ]);
 
           console.log('[Agent] Response:', {
             content: response.content?.slice(0, 100),
@@ -704,6 +728,9 @@ IMPORTANT INSTRUCTIONS:
                       newText: editResult.newContent || '',
                       description: toolCall.arguments.description as string | undefined,
                       createdAt: new Date().toISOString(),
+                      // Context for AI annotations
+                      conversationId: conversationId || undefined,
+                      messageId: assistantMessageId || undefined,
                     };
                     fileSystem.stageEdit(stagedEdit);
                     // Don't call onFileChange - wait for accept/reject

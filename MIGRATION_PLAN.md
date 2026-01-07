@@ -2,9 +2,9 @@
 
 **Goal:** Achieve full feature parity with the existing Electron app while supporting both desktop (Tauri) and web (midlight.ai/editor) platforms.
 
-**Current Status:** Phase 3 (Version History) complete. Phase 4 (AI Integration) ready to start.
+**Current Status:** Phase 5 (Authentication & Subscription) ~80% complete. Stripe integration and quota UI remaining.
 
-**Latest Session (January 2025):** Completed Phase 3 version history UI - tab system, version list, restore/save modals, diff viewer with unified/split modes.
+**Latest Session (January 2025):** Completed Phase 4 AI annotations. Audited Phase 5 - discovered auth (email/password, Google OAuth), token management, and UI gating already implemented. Remaining: Stripe payment integration, quota enforcement UI.
 
 ---
 
@@ -804,7 +804,7 @@ impl CheckpointManager {
 | `@midlight/core` types | ✅ | TiptapDocument, Checkpoint, StorageAdapter |
 | Document serializer | ✅ | Tiptap JSON → Markdown (browser-compatible) |
 | Document deserializer | ✅ | Markdown → Tiptap JSON (browser-compatible) |
-| `@midlight/stores` | ✅ | fileSystem, ai, versions, auth, settings |
+| `@midlight/stores` | ✅ | fileSystem, ai, versions, auth, settings, agent |
 | Web app scaffold | ✅ | SvelteKit + OPFS adapter |
 | Desktop app scaffold | ✅ | Tauri + basic Svelte UI |
 | Rust ObjectStore | ✅ | SHA-256 content-addressable storage |
@@ -819,21 +819,42 @@ impl CheckpointManager {
 | Sidebar file management | ✅ | Context menu, multi-select, drag-drop, keyboard shortcuts |
 | Version history UI | ✅ | VersionsPanel, SaveSnapshotModal, RestoreConfirmDialog, DiffViewer |
 | RightSidebar tabs | ✅ | Chat/Versions tab system with auto-switching |
+| LLM Client (Web) | ✅ | `@midlight/core` WebLLMClient with SSE streaming |
+| LLM Client (Tauri) | ✅ | TauriLLMClient with event-based streaming |
+| Rust LLM Service | ✅ | HTTP client, SSE parsing, multi-provider (OpenAI/Anthropic/Gemini) |
+| Tauri LLM Commands | ✅ | chat, chatStream, chatWithTools, chatWithToolsStream, getModels, getQuota |
+| AI Chat Panel | ✅ | Full UI with streaming, provider/model selection, temperature, web search |
+| Context Picker | ✅ | @mention file picker with keyboard navigation |
+| Agent Tools | ✅ | 7 tools: list, read, create, edit, move, delete, search |
+| Agent Store | ✅ | Execution tracking, pending changes, confirmation flow |
+| Agent Loop | ✅ | `sendMessageWithAgent()` with max 15 iterations |
+| Rust Agent Executor | ✅ | All 7 tools implemented in `agent_executor.rs` |
+| Thinking Steps UI | ✅ | Expandable steps with icons and status |
+| Tool Actions UI | ✅ | ToolActionsGroup, ToolActionCard components |
+| Pending Changes Panel | ✅ | Review UI with accept/reject, batch operations |
+| Inline Editing | ✅ | Cmd+K trigger, InlineEditPrompt, streaming suggestions |
+| Staged Edit Toolbar | ✅ | Accept/Reject floating toolbar for AI edits |
+| AI Annotations | ✅ | Click-to-view popover, removal, change tracking |
+| Auth Store | ✅ | User, Subscription, Quota types + methods |
+| Auth Client (TS) | ✅ | init, login, signup, loginWithGoogle, getAccessToken |
+| Auth Service (Rust) | ✅ | 648 lines: token management, OAuth, cookies |
+| Auth Commands | ✅ | 12 Tauri commands for all auth operations |
+| AuthModal UI | ✅ | Login/signup modes, Google OAuth button |
+| Chat Auth Gating | ✅ | Sign-in required prompt in ChatPanel |
+| Settings Auth Section | ✅ | Account display, sign out, subscription tier |
 
 ### In Progress 🔄
 
 | Component | Status | Remaining Work |
 |-----------|--------|----------------|
-| Editor component | 🔄 | Missing inline editing mode |
-| Chat panel | 🔄 | Missing AI integration, tool execution |
 | Document serialization integration | 🔄 | TypeScript serializers exist, need frontend integration |
+| Quota tracking | 🔄 | Backend fetching works, need client-side UI/enforcement |
+| Subscription management | 🔄 | Tier display works, need Stripe checkout/upgrade flow |
 
 ### Not Started ❌
 
 | Component | Priority |
 |-----------|----------|
-| AI/LLM integration | P0 |
-| Agent executor | P0 |
 | Recovery manager | P1 |
 | File watcher | P1 |
 | Import service (Obsidian/Notion) | P2 |
@@ -914,36 +935,39 @@ Based on the existing Electron app's `preload.ts`, here are all operations that 
 - [ ] `importNotion(analysisJson, destPath, optionsJson)` - Import Notion
 - [ ] `importCancel()` - Cancel import
 
-#### Authentication (10)
-- [ ] `auth.signup(email, password, displayName)` - Sign up
-- [ ] `auth.login(email, password)` - Login
-- [ ] `auth.logout()` - Logout
-- [ ] `auth.loginWithGoogle()` - Google OAuth
-- [ ] `auth.getUser()` - Get user profile
-- [ ] `auth.getSubscription()` - Get subscription
-- [ ] `auth.getUsage()` - Get usage stats
-- [ ] `auth.isAuthenticated()` - Check auth
-- [ ] `auth.getState()` - Get auth state
-- [ ] `auth.onAuthStateChange(callback)` - Auth state listener
+#### Authentication (12) ✅ COMPLETE
+- [x] `auth.init()` - Silent refresh on app start (`auth_init`)
+- [x] `auth.signup(email, password, displayName)` - Sign up (`auth_signup`)
+- [x] `auth.login(email, password)` - Login (`auth_login`)
+- [x] `auth.logout()` - Logout (`auth_logout`)
+- [x] `auth.loginWithGoogle()` - Google OAuth (`auth_login_with_google` with local TCP callback)
+- [x] `auth.handleOAuthCallback(code)` - OAuth code exchange (`auth_handle_oauth_callback`)
+- [x] `auth.getUser()` - Get user profile (`auth_get_user`)
+- [x] `auth.getSubscription()` - Get subscription (`auth_get_subscription`)
+- [x] `auth.getQuota()` - Get usage quota (`auth_get_quota`)
+- [x] `auth.isAuthenticated()` - Check auth (`auth_is_authenticated`)
+- [x] `auth.getState()` - Get auth state (`auth_get_state`)
+- [x] `auth.getAccessToken()` - Get token for API calls (`auth_get_access_token`)
+- [x] `auth.onAuthStateChange(callback)` - Auth state listener (via Tauri events)
 
-#### LLM Operations (11)
-- [ ] `llm.chat(options)` - Non-streaming chat
-- [ ] `llm.chatStream(options, channelId)` - Streaming chat
-- [ ] `llm.onStreamChunk(channelId, callback)` - Stream chunk listener
-- [ ] `llm.onStreamDone(channelId, callback)` - Stream done listener
-- [ ] `llm.onStreamUsage(channelId, callback)` - Usage listener
-- [ ] `llm.onStreamError(channelId, callback)` - Error listener
-- [ ] `llm.offStream(channelId)` - Remove listeners
-- [ ] `llm.chatWithTools(options)` - Tool calling
-- [ ] `llm.getModels()` - Get available models
-- [ ] `llm.getQuota()` - Get quota
-- [ ] `llm.getStatus()` - Get service status
+#### LLM Operations (11) ✅ COMPLETE
+- [x] `llm.chat(options)` - Non-streaming chat (`llm_chat` Tauri command)
+- [x] `llm.chatStream(options, channelId)` - Streaming chat (`llm_chat_stream` + events)
+- [x] `llm.onStreamChunk(channelId, callback)` - Stream chunk listener (via Tauri events)
+- [x] `llm.onStreamDone(channelId, callback)` - Stream done listener (via Tauri events)
+- [x] `llm.onStreamUsage(channelId, callback)` - Usage listener (via Tauri events)
+- [x] `llm.onStreamError(channelId, callback)` - Error listener (via Tauri events)
+- [x] `llm.offStream(channelId)` - Remove listeners (via unlisten)
+- [x] `llm.chatWithTools(options)` - Tool calling (`llm_chat_with_tools`)
+- [x] `llm.getModels()` - Get available models (`llm_get_models`)
+- [x] `llm.getQuota()` - Get quota (`llm_get_quota`)
+- [x] `llm.getStatus()` - Get service status (`llm_get_status`)
 
-#### Agent Operations (4)
-- [ ] `agent.getTools()` - Get tool definitions
-- [ ] `agent.executeTools(workspaceRoot, toolCalls[])` - Execute tools
-- [ ] `agent.isDestructive(toolName)` - Check destructive
-- [ ] `agent.isReadOnly(toolName)` - Check read-only
+#### Agent Operations (4) ✅ COMPLETE
+- [x] `agent.getTools()` - Get tool definitions (in `@midlight/core/agent/tools.ts`)
+- [x] `agent.executeTools(workspaceRoot, toolCalls[])` - Execute tools (`agent_execute_tool` Tauri command)
+- [x] `agent.isDestructive(toolName)` - Check destructive (in tool definitions)
+- [x] `agent.isReadOnly(toolName)` - Check read-only (in tool definitions)
 
 #### Subscription Operations (4)
 - [ ] `subscription.getStatus()` - Get subscription
@@ -975,17 +999,17 @@ Based on the existing Electron app's `preload.ts`, here are all operations that 
 
 | Service | Electron | Tauri | Web | Status |
 |---------|----------|-------|-----|--------|
-| WorkspaceManager | TS | Rust | TS | 🔄 Partial |
-| CheckpointManager | TS | Rust | TS | 🔄 Partial |
-| ObjectStore | TS | Rust | TS (OPFS) | 🔄 Partial |
-| ImageManager | TS | Rust | TS (OPFS) | ❌ |
+| WorkspaceManager | TS | Rust | TS | ✅ Complete |
+| CheckpointManager | TS | Rust | TS | ✅ Complete |
+| ObjectStore | TS | Rust | TS (OPFS) | ✅ Complete |
+| ImageManager | TS | Rust | TS (OPFS) | ✅ Complete |
 | RecoveryManager | TS | Rust | TS (IndexedDB) | ❌ |
 | FileWatcher | TS | Rust (notify) | N/A | ❌ |
 | DocumentSerializer | TS | TS (shared) | TS (shared) | ✅ |
 | DocumentDeserializer | TS | TS (shared) | TS (shared) | ✅ |
-| AuthService | TS | TS (shared) | TS (shared) | ❌ |
-| LLMService | TS | TS (shared) | TS (shared) | ❌ |
-| AgentExecutor | TS | TS (shared) | TS (shared) | ❌ |
+| AuthService | TS | Rust + TS | TS (shared) | ✅ Complete |
+| LLMService | TS | Rust + TS | TS (shared) | ✅ Complete |
+| AgentExecutor | TS | Rust + TS | TS (shared) | ✅ Complete |
 | SubscriptionService | TS | TS (shared) | TS (shared) | ❌ |
 | ImportService | TS | Rust + TS | TS | ❌ |
 | AutoUpdateService | TS | Tauri plugin | N/A | ❌ |
@@ -1028,16 +1052,25 @@ Based on the existing Electron app's `preload.ts`, here are all operations that 
 
 *Location: `apps/desktop/src/lib/components/`*
 
-#### Chat Components
-- [x] `ChatPanel.svelte` - Basic chat UI (extracted from RightSidebar)
-- [ ] `ChatInput.svelte` - Message input with @ mentions
-- [ ] `ChatMessage.svelte` - Message display
-- [ ] `ConversationTabs.svelte` - Multi-conversation
-- [ ] `ContextPicker.svelte` - @ file autocomplete
-- [ ] `ContextPills.svelte` - Context display
-- [ ] `ThinkingSteps.svelte` - AI reasoning display
-- [ ] `StructuredActivityView.svelte` - Tool results
-- [ ] `ModelSelector.svelte` - LLM model picker
+#### Chat Components ✅ COMPLETE
+- [x] `ChatPanel.svelte` - Full chat UI with streaming, provider/model selection, temperature, web search toggle
+- [x] `ConversationTabs.svelte` - Multi-conversation tabs with create/delete
+- [x] `ContextPicker.svelte` - @mention file picker with keyboard navigation
+- [x] `ContextPills.svelte` - Display selected context items
+- [x] `ThinkingSteps.svelte` - Expandable AI reasoning display with icons
+- [x] `ToolActionsGroup.svelte` - Tool execution group display
+- [x] `ToolActionCard.svelte` - Individual tool execution status
+- [x] `PendingChangesPanel.svelte` - Review pending AI edits with accept/reject
+
+*Location: `apps/desktop/src/lib/components/Chat/`*
+
+#### Editor AI Components ✅ COMPLETE
+- [x] `InlineEditPrompt.svelte` - Cmd+K floating prompt for inline edits
+- [x] `InlineDiff.svelte` - Before/after comparison view
+- [x] `StagedEditToolbar.svelte` - Accept/Reject toolbar for AI changes
+- [x] `AnnotationPopover.svelte` - AI annotation display (UI ready, integration pending)
+
+*Location: `apps/desktop/src/lib/components/Editor/`*
 
 #### Version Components ✅ COMPLETE
 - [x] `VersionsPanel.svelte` - Version list with selection, restore, compare
@@ -1074,12 +1107,12 @@ Based on the existing Electron app's `preload.ts`, here are all operations that 
 
 | Store | Fields | Status |
 |-------|--------|--------|
-| fileSystem | rootDir, files, openFiles, activeFilePath, editorContent, isDirty, lastSavedAt, autoSaveEnabled, autoSaveInterval, hasRecovery, pendingDiffs, selectedPaths, clipboardPaths, clipboardOperation | ✅ Complete |
-| ai | conversations, activeConversationId, isStreaming, error, selectedProvider, selectedModel, contextItems, webSearchEnabled + methods: setStreaming, setError, clearConversation | ✅ Complete |
+| fileSystem | rootDir, files, openFiles, activeFilePath, editorContent, isDirty, lastSavedAt, autoSaveEnabled, autoSaveInterval, hasRecovery, pendingDiffs, selectedPaths, clipboardPaths, clipboardOperation, stagedEdit | ✅ Complete |
+| ai | conversations, activeConversationId, isStreaming, error, selectedProvider, selectedModel, contextItems, webSearchEnabled, inlineEdit, annotationsVisible + methods: sendMessage, sendMessageWithAgent, sendInlineEditRequest, acceptInlineEdit, setLLMClient, setToolExecutor | ✅ Complete |
 | versions | isOpen, versions, selectedVersionId, isLoading + methods: open, close, setVersions, selectVersion, setIsLoading | ✅ Complete |
-| auth | user, subscription, quota, isAuthenticated, isInitializing | 🔄 Partial |
+| auth | user, subscription, quota, isAuthenticated, isInitializing, error + methods: setUser, setSubscription, setQuota, logout | ✅ Complete |
 | settings | isOpen, activeTab, theme, font, fontSize | 🔄 Partial |
-| agent | status, currentTool, pendingChanges, preChangeCheckpointId | ❌ |
+| agent | toolExecutions, pendingChanges + methods: startExecution, completeExecution, addPendingChange, acceptChange, rejectChange, requireConfirmation | ✅ Complete |
 
 ---
 
@@ -1209,48 +1242,110 @@ Based on the existing Electron app's `preload.ts`, here are all operations that 
 
 ---
 
-### Phase 4: AI Integration (P0) - Weeks 8-11
+### Phase 4: AI Integration (P0) - ✅ COMPLETE
 
 **Goal:** Full AI chat with agent tools
 
+**Status:** ✅ All features implemented.
+
 #### Tasks
-1. Build LLM service connecting to midlight.ai/api/llm
-2. Implement streaming chat responses
-3. Build AIChatPanel with message history
-4. Add @ mention context picker
-5. Implement AI Agent executor with 7 tools
-6. Build pending changes review UI
-7. Add inline editing mode
-8. Implement AI annotations
+1. ✅ Build LLM service connecting to midlight.ai/api/llm
+2. ✅ Implement streaming chat responses
+3. ✅ Build AIChatPanel with message history
+4. ✅ Add @ mention context picker
+5. ✅ Implement AI Agent executor with 7 tools
+6. ✅ Build pending changes review UI
+7. ✅ Add inline editing mode
+8. ✅ Implement AI annotations
+
+#### Implementation Notes
+- **LLM Architecture:**
+  - `@midlight/core/llm`: Types + WebLLMClient (browser reference)
+  - `apps/desktop/src/lib/llm.ts`: TauriLLMClient with event-based streaming
+  - `src-tauri/services/llm_service.rs`: HTTP client with SSE parsing
+  - `src-tauri/commands/llm.rs`: 6 commands (chat, stream, tools, models, quota, status)
+- **Agent Architecture:**
+  - `@midlight/core/agent/tools.ts`: 7 tool definitions with JSON Schema
+  - `@midlight/stores/agent.ts`: Execution tracking, pending changes, confirmations
+  - `@midlight/stores/ai.ts`: `sendMessageWithAgent()` loop (max 15 iterations)
+  - `src-tauri/services/agent_executor.rs`: Rust tool implementations
+- **Chat UI Components** (`apps/desktop/src/lib/components/Chat/`):
+  - `ContextPicker.svelte`: @mention file picker with keyboard nav
+  - `ContextPills.svelte`: Display selected context items
+  - `ThinkingSteps.svelte`: Agent reasoning visualization
+  - `ToolActionsGroup.svelte`, `ToolActionCard.svelte`: Tool execution display
+  - `PendingChangesPanel.svelte`: Accept/reject pending edits
+  - `ConversationTabs.svelte`: Multi-conversation support
+- **Inline Editing** (`apps/desktop/src/lib/components/Editor/`):
+  - Cmd+K shortcut triggers `InlineEditPrompt.svelte`
+  - `InlineDiff.svelte`: Before/after comparison
+  - `StagedEditToolbar.svelte`: Accept/Reject floating toolbar
+  - `ai.sendInlineEditRequest()`: Streaming LLM call for edits
+- **Annotations** (complete):
+  - `AnnotationPopover.svelte`: Click-to-view UI with removal
+  - AIAnnotation Tiptap extension with setAIAnnotation/unsetAIAnnotation
+  - Change tracking via `computeChangeRanges()` in diff.ts
+  - Annotations applied on staged edit accept and inline edit accept
 
 #### Success Criteria
-- [ ] Chat works with streaming responses
-- [ ] @ mentions add file context
-- [ ] Agent can create, edit, delete, move documents
-- [ ] Changes require user review before applying
-- [ ] Undo capability for agent changes
+- [x] Chat works with streaming responses
+- [x] @ mentions add file context
+- [x] Agent can create, edit, delete, move documents
+- [x] Changes require user review before applying
+- [x] Undo capability for agent changes (via staged edits)
+- [x] AI annotations visible in editor with click-to-view and removal
 
 ---
 
-### Phase 5: Authentication & Subscription (P1) - Weeks 12-13
+### Phase 5: Authentication & Subscription (P1) - ~80% COMPLETE
 
 **Goal:** User accounts with subscription management
 
+**Status:** ✅ Core auth complete. Stripe payment integration and quota enforcement remaining.
+
 #### Tasks
-1. Build AuthService with JWT/refresh tokens
-2. Implement email/password login/signup
-3. Add Google OAuth flow
-4. Build AuthModal UI
-5. Connect SubscriptionService to Stripe
-6. Build UpgradeModal with pricing
-7. Add quota tracking and limits
+1. ✅ Build AuthService with JWT/refresh tokens (Rust: `auth_service.rs` 648 lines)
+2. ✅ Implement email/password login/signup (`auth_login`, `auth_signup` commands)
+3. ✅ Add Google OAuth flow (local TCP callback server + event-driven)
+4. ✅ Build AuthModal UI (`AuthModal.svelte` with login/signup modes)
+5. ❌ Connect SubscriptionService to Stripe (not started)
+6. ❌ Build UpgradeModal with pricing (not started)
+7. 🔄 Add quota tracking and limits (fetching works, enforcement missing)
+
+#### Implementation Notes
+- **Auth Store** (`packages/stores/src/auth.ts`):
+  - User, Subscription, Quota types
+  - `isAuthenticated`, `isInitializing` state
+  - `setUser()`, `setSubscription()`, `logout()` methods
+- **Auth Client** (`apps/desktop/src/lib/auth.ts`):
+  - `init()` - Silent refresh on app start
+  - `login(email, password)`, `signup()`, `loginWithGoogle()`
+  - `getAccessToken()` - Used by LLM client
+  - Event listeners for OAuth completion
+- **Rust AuthService** (`src-tauri/services/auth_service.rs`):
+  - In-memory access token (never persisted)
+  - Refresh token in httpOnly cookies
+  - 60-second early refresh buffer
+  - OAuth code exchange
+- **Tauri Commands** (`src-tauri/commands/auth.rs`):
+  - 12 commands: init, signup, login, logout, login_with_google, handle_oauth_callback, get_user, get_subscription, get_quota, is_authenticated, get_state, get_access_token
+- **UI Integration**:
+  - AuthModal in App.svelte
+  - Account section in SettingsModal
+  - Sign-in gate in ChatPanel
+
+#### Remaining Work
+1. **Stripe Integration** - Build upgrade flow, connect to backend checkout endpoints
+2. **Quota Enforcement** - Display quota in UI, prevent requests when exceeded
+3. **Password Reset** - Add forgot password flow
+4. **Account Management** - Change email/password, delete account
 
 #### Success Criteria
-- [ ] Users can sign up and login
-- [ ] Google OAuth works
-- [ ] Subscription status reflected in UI
-- [ ] Quota limits enforced
-- [ ] Upgrade flow works end-to-end
+- [x] Users can sign up and login
+- [x] Google OAuth works
+- [x] Subscription status reflected in UI
+- [ ] Quota limits enforced (backend enforces, client needs UI)
+- [ ] Upgrade flow works end-to-end (needs Stripe)
 
 ---
 
@@ -1518,5 +1613,5 @@ See the [Electron services directory](../ai-doc-app/electron/services/) for deta
 
 ---
 
-*Last updated: January 5, 2025*
-*Document version: 1.2*
+*Last updated: January 6, 2025*
+*Document version: 1.3*

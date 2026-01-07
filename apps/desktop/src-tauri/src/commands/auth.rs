@@ -1,6 +1,6 @@
 // Auth Commands - Tauri IPC handlers for authentication
 
-use crate::services::auth_service::{Quota, Subscription, User, AUTH_SERVICE};
+use crate::services::auth_service::{CheckoutSession, PortalSession, Price, Quota, Subscription, User, AUTH_SERVICE};
 use serde::Serialize;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -285,4 +285,100 @@ pub async fn auth_get_state() -> String {
 pub async fn auth_get_access_token() -> Option<String> {
     debug!("auth_get_access_token command");
     AUTH_SERVICE.get_access_token().await
+}
+
+/// Request password reset email
+#[tauri::command]
+pub async fn auth_forgot_password(email: String) -> Result<(), String> {
+    debug!("auth_forgot_password command: {}", email);
+
+    AUTH_SERVICE
+        .forgot_password(&email)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reset password with token
+#[tauri::command]
+pub async fn auth_reset_password(token: String, new_password: String) -> Result<(), String> {
+    debug!("auth_reset_password command");
+
+    AUTH_SERVICE
+        .reset_password(&token, &new_password)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Update user profile
+#[tauri::command]
+pub async fn auth_update_profile(
+    email: Option<String>,
+    display_name: Option<String>,
+    current_password: Option<String>,
+    new_password: Option<String>,
+) -> Result<User, String> {
+    debug!("auth_update_profile command");
+
+    AUTH_SERVICE
+        .update_profile(
+            email.as_deref(),
+            display_name.as_deref(),
+            current_password.as_deref(),
+            new_password.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Subscription Commands
+// ============================================================================
+
+/// Get available subscription prices
+#[tauri::command]
+pub async fn subscription_get_prices() -> Result<Vec<Price>, String> {
+    debug!("subscription_get_prices command");
+
+    AUTH_SERVICE
+        .get_prices()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create Stripe checkout session and open in browser
+#[tauri::command]
+pub async fn subscription_create_checkout(price_id: String) -> Result<CheckoutSession, String> {
+    debug!("subscription_create_checkout command: {}", price_id);
+
+    let session = AUTH_SERVICE
+        .create_checkout_session(&price_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Open checkout URL in browser
+    if let Err(e) = open::that(&session.url) {
+        error!("Failed to open checkout URL: {}", e);
+        // Don't fail the command, return the URL so frontend can handle it
+    }
+
+    Ok(session)
+}
+
+/// Create Stripe billing portal session and open in browser
+#[tauri::command]
+pub async fn subscription_create_portal() -> Result<PortalSession, String> {
+    debug!("subscription_create_portal command");
+
+    let session = AUTH_SERVICE
+        .create_portal_session()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Open portal URL in browser
+    if let Err(e) = open::that(&session.url) {
+        error!("Failed to open portal URL: {}", e);
+        // Don't fail the command, return the URL so frontend can handle it
+    }
+
+    Ok(session)
 }

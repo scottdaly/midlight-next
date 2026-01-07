@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import { Editor } from '@tiptap/core';
+  import { onDestroy, tick } from 'svelte';
+  import { Editor, getMarkRange } from '@tiptap/core';
   import StarterKit from '@tiptap/starter-kit';
   import Placeholder from '@tiptap/extension-placeholder';
   import Underline from '@tiptap/extension-underline';
@@ -44,6 +44,7 @@
   interface AnnotationPopoverState {
     position: { x: number; y: number };
     attrs: AIAnnotationAttributes;
+    range?: { from: number; to: number }; // Text range for removal
   }
   let annotationPopover = $state<AnnotationPopoverState | null>(null);
 
@@ -220,9 +221,30 @@
       // Get position for the popover
       const rect = annotationElement.getBoundingClientRect();
 
+      // Try to get the Tiptap position range for this annotation
+      let range: { from: number; to: number } | undefined;
+      try {
+        // Get the position from the click coordinates
+        const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (pos) {
+          // Get the mark range for the AI annotation at this position
+          const resolvedPos = editor.state.doc.resolve(pos.pos);
+          const aiAnnotationMark = editor.schema.marks.aiAnnotation;
+          if (aiAnnotationMark) {
+            const markRange = getMarkRange(resolvedPos, aiAnnotationMark);
+            if (markRange) {
+              range = { from: markRange.from, to: markRange.to };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not determine annotation range:', e);
+      }
+
       annotationPopover = {
         position: { x: rect.left, y: rect.bottom + 8 },
         attrs,
+        range,
       };
       return;
     }
@@ -254,9 +276,64 @@
     // This will be wired up when we integrate with the UI
   }
 
+  // Handle removing an annotation
+  function handleRemoveAnnotation() {
+    if (!editor || !annotationPopover?.range) return;
+
+    const { from, to } = annotationPopover.range;
+
+    editor.chain()
+      .focus()
+      .setTextSelection({ from, to })
+      .unsetAIAnnotation()
+      .setTextSelection(to) // Move cursor to end of previously annotated text
+      .run();
+
+    annotationPopover = null;
+  }
+
   // Handle accept staged edit
   async function handleAcceptStagedEdit() {
-    await fileSystem.acceptStagedEdit();
+    // Accept the staged edit and get the info for annotation
+    const stagedInfo = await fileSystem.acceptStagedEdit();
+    if (!stagedInfo || !editor || editor.isDestroyed) return;
+
+    // Wait for the content update to propagate to the editor
+    await tick();
+
+    // Apply AI annotations to changed regions
+    if (stagedInfo.changeRanges && stagedInfo.changeRanges.length > 0) {
+      const chain = editor.chain().focus();
+
+      // Tiptap positions: +1 for doc node at start
+      // For simple documents, text character positions roughly map to Tiptap positions
+      // with an offset of 1 (for the doc node) + 1 (for the first paragraph node)
+      const positionOffset = 2;
+
+      for (const range of stagedInfo.changeRanges) {
+        const from = range.from + positionOffset;
+        const to = range.to + positionOffset;
+
+        // Clamp to document size
+        const docSize = editor.state.doc.content.size;
+        const clampedFrom = Math.max(1, Math.min(from, docSize));
+        const clampedTo = Math.max(clampedFrom, Math.min(to, docSize));
+
+        if (clampedTo > clampedFrom) {
+          chain
+            .setTextSelection({ from: clampedFrom, to: clampedTo })
+            .setAIAnnotation({
+              conversationId: stagedInfo.conversationId || '',
+              messageId: stagedInfo.messageId || '',
+              type: 'edit',
+              tooltip: stagedInfo.description || 'AI edit',
+            });
+        }
+      }
+
+      // Move cursor to end after applying annotations
+      chain.setTextSelection(editor.state.doc.content.size).run();
+    }
   }
 
   // Handle reject staged edit
@@ -310,6 +387,7 @@
         tooltip={annotationPopover.attrs.tooltip}
         onClose={closeAnnotationPopover}
         onGoToConversation={handleGoToConversation}
+        onRemove={handleRemoveAnnotation}
       />
     {/if}
 

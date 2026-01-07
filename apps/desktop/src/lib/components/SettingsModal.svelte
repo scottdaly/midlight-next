@@ -1,17 +1,89 @@
 <script lang="ts">
-  import { settings, auth } from '@midlight/stores';
+  import { settings, auth, subscription, isFreeTier, quotaDisplay, quotaPercentUsed } from '@midlight/stores';
   import type { Theme } from '@midlight/stores';
   import { authClient } from '$lib/auth';
+  import { subscriptionClient } from '$lib/subscription';
   import ThemePreview from './ThemePreview.svelte';
 
   interface Props {
     open: boolean;
     onClose: () => void;
     onOpenAuthModal?: () => void;
+    onOpenUpgradeModal?: () => void;
   }
 
-  let { open, onClose, onOpenAuthModal }: Props = $props();
+  let { open, onClose, onOpenAuthModal, onOpenUpgradeModal }: Props = $props();
   let isLoggingOut = $state(false);
+  let isOpeningPortal = $state(false);
+
+  // Account management state
+  let showEditProfile = $state(false);
+  let editDisplayName = $state('');
+  let editEmail = $state('');
+  let currentPassword = $state('');
+  let newPassword = $state('');
+  let confirmPassword = $state('');
+  let isSavingProfile = $state(false);
+  let profileError = $state<string | null>(null);
+  let profileSuccess = $state(false);
+
+  function startEditProfile() {
+    editDisplayName = $auth.user?.displayName || '';
+    editEmail = $auth.user?.email || '';
+    currentPassword = '';
+    newPassword = '';
+    confirmPassword = '';
+    profileError = null;
+    profileSuccess = false;
+    showEditProfile = true;
+  }
+
+  function cancelEditProfile() {
+    showEditProfile = false;
+    profileError = null;
+    profileSuccess = false;
+  }
+
+  async function handleSaveProfile() {
+    profileError = null;
+    profileSuccess = false;
+
+    // Validate
+    if (newPassword && newPassword !== confirmPassword) {
+      profileError = 'New passwords do not match';
+      return;
+    }
+
+    if (newPassword && newPassword.length < 8) {
+      profileError = 'Password must be at least 8 characters';
+      return;
+    }
+
+    if (newPassword && !currentPassword) {
+      profileError = 'Current password is required to change password';
+      return;
+    }
+
+    isSavingProfile = true;
+
+    try {
+      await authClient.updateProfile({
+        displayName: editDisplayName !== $auth.user?.displayName ? editDisplayName : undefined,
+        email: editEmail !== $auth.user?.email ? editEmail : undefined,
+        currentPassword: currentPassword || undefined,
+        newPassword: newPassword || undefined,
+      });
+      profileSuccess = true;
+      // Clear password fields after successful save
+      currentPassword = '';
+      newPassword = '';
+      confirmPassword = '';
+    } catch (err) {
+      profileError = err instanceof Error ? err.message : String(err);
+    } finally {
+      isSavingProfile = false;
+    }
+  }
 
   type Tab = 'appearance' | 'editor' | 'ai' | 'general';
   let activeTab = $state<Tab>('appearance');
@@ -239,16 +311,6 @@
                     </div>
                   </div>
 
-                  <!-- Subscription info -->
-                  {#if $auth.subscription}
-                    <div class="text-xs text-muted-foreground mb-4">
-                      <span class="capitalize">{$auth.subscription.tier}</span> plan
-                      {#if $auth.subscription.status === 'active'}
-                        <span class="text-green-500 ml-1">Active</span>
-                      {/if}
-                    </div>
-                  {/if}
-
                   <!-- Sign out button -->
                   <button
                     onclick={async () => {
@@ -280,6 +342,207 @@
                   </button>
                 {/if}
               </div>
+
+              <!-- Subscription Section -->
+              {#if $auth.isAuthenticated}
+                <div class="py-3 border-b border-border">
+                  <div class="text-sm font-medium mb-3">Subscription</div>
+
+                  <!-- Plan info -->
+                  <div class="flex items-center justify-between mb-4">
+                    <div>
+                      <div class="text-sm">
+                        <span class="capitalize font-medium">{$subscription.status?.tier || 'Free'}</span> Plan
+                      </div>
+                      {#if $subscription.status?.status === 'active' && !$isFreeTier}
+                        <div class="text-xs text-green-500">Active</div>
+                      {/if}
+                    </div>
+
+                    {#if $isFreeTier}
+                      <button
+                        onclick={() => {
+                          onClose();
+                          onOpenUpgradeModal?.();
+                        }}
+                        class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                      >
+                        Upgrade
+                      </button>
+                    {:else}
+                      <button
+                        onclick={async () => {
+                          isOpeningPortal = true;
+                          try {
+                            await subscriptionClient.openPortal();
+                          } finally {
+                            isOpeningPortal = false;
+                          }
+                        }}
+                        disabled={isOpeningPortal}
+                        class="px-4 py-2 text-sm border border-border rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+                      >
+                        {isOpeningPortal ? 'Opening...' : 'Manage Subscription'}
+                      </button>
+                    {/if}
+                  </div>
+
+                  <!-- Quota display (free tier only) -->
+                  {#if $isFreeTier && $subscription.quota}
+                    <div class="bg-muted rounded-lg p-3">
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-muted-foreground">Monthly Usage</span>
+                        <span class="text-xs font-medium">{$quotaDisplay} messages</span>
+                      </div>
+                      <!-- Progress bar -->
+                      <div class="h-2 bg-background rounded-full overflow-hidden">
+                        <div
+                          class="h-full transition-all {$quotaPercentUsed >= 90 ? 'bg-destructive' : $quotaPercentUsed >= 75 ? 'bg-amber-500' : 'bg-primary'}"
+                          style="width: {Math.min(100, $quotaPercentUsed)}%"
+                        ></div>
+                      </div>
+                      {#if $quotaPercentUsed >= 75}
+                        <p class="text-xs text-muted-foreground mt-2">
+                          {#if $quotaPercentUsed >= 100}
+                            You've reached your limit. Upgrade for unlimited messages.
+                          {:else}
+                            Running low on messages. Consider upgrading for unlimited access.
+                          {/if}
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              <!-- Account Management Section -->
+              {#if $auth.isAuthenticated}
+                <div class="py-3 border-b border-border">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="text-sm font-medium">Account Settings</div>
+                    {#if !showEditProfile}
+                      <button
+                        onclick={startEditProfile}
+                        class="text-xs text-primary hover:underline"
+                      >
+                        Edit
+                      </button>
+                    {/if}
+                  </div>
+
+                  {#if showEditProfile}
+                    <!-- Edit Profile Form -->
+                    <div class="space-y-4">
+                      {#if profileError}
+                        <div class="p-2 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive">
+                          {profileError}
+                        </div>
+                      {/if}
+
+                      {#if profileSuccess}
+                        <div class="p-2 bg-green-500/10 border border-green-500/20 rounded text-sm text-green-600 dark:text-green-400">
+                          Profile updated successfully!
+                        </div>
+                      {/if}
+
+                      <div>
+                        <label for="editDisplayName" class="block text-xs font-medium text-muted-foreground mb-1">
+                          Display Name
+                        </label>
+                        <input
+                          type="text"
+                          id="editDisplayName"
+                          bind:value={editDisplayName}
+                          class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+
+                      <div>
+                        <label for="editEmail" class="block text-xs font-medium text-muted-foreground mb-1">
+                          Email
+                        </label>
+                        <input
+                          type="email"
+                          id="editEmail"
+                          bind:value={editEmail}
+                          class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+
+                      <div class="pt-2 border-t border-border">
+                        <p class="text-xs text-muted-foreground mb-3">
+                          Change Password (leave blank to keep current)
+                        </p>
+
+                        <div class="space-y-3">
+                          <div>
+                            <label for="currentPassword" class="block text-xs font-medium text-muted-foreground mb-1">
+                              Current Password
+                            </label>
+                            <input
+                              type="password"
+                              id="currentPassword"
+                              bind:value={currentPassword}
+                              placeholder="Required for password change"
+                              class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </div>
+
+                          <div>
+                            <label for="newPassword" class="block text-xs font-medium text-muted-foreground mb-1">
+                              New Password
+                            </label>
+                            <input
+                              type="password"
+                              id="newPassword"
+                              bind:value={newPassword}
+                              placeholder="At least 8 characters"
+                              class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </div>
+
+                          <div>
+                            <label for="confirmPassword" class="block text-xs font-medium text-muted-foreground mb-1">
+                              Confirm New Password
+                            </label>
+                            <input
+                              type="password"
+                              id="confirmPassword"
+                              bind:value={confirmPassword}
+                              placeholder="Repeat new password"
+                              class="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="flex gap-2 pt-2">
+                        <button
+                          onclick={handleSaveProfile}
+                          disabled={isSavingProfile}
+                          class="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {isSavingProfile ? 'Saving...' : 'Save Changes'}
+                        </button>
+                        <button
+                          onclick={cancelEditProfile}
+                          disabled={isSavingProfile}
+                          class="px-4 py-1.5 text-sm border border-border rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="text-sm text-muted-foreground">
+                      <p>Email: {$auth.user?.email}</p>
+                      {#if $auth.user?.displayName}
+                        <p>Name: {$auth.user.displayName}</p>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
 
               <div class="py-3">
                 <p class="text-xs text-muted-foreground">

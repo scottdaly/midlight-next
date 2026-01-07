@@ -107,12 +107,28 @@ pub fn run() {
             commands::auth::auth_is_authenticated,
             commands::auth::auth_get_state,
             commands::auth::auth_get_access_token,
+            commands::auth::auth_forgot_password,
+            commands::auth::auth_reset_password,
+            commands::auth::auth_update_profile,
+            // Subscription commands
+            commands::auth::subscription_get_prices,
+            commands::auth::subscription_create_checkout,
+            commands::auth::subscription_create_portal,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    // Force the window to have a shadow and proper title bar settings
+                    let _ = window.set_shadow(true);
+                }
             }
             Ok(())
         })

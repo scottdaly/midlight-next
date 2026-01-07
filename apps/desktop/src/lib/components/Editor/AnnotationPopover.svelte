@@ -14,6 +14,7 @@
     tooltip?: string;
     onClose: () => void;
     onGoToConversation?: () => void;
+    onRemove?: () => void;
   }
 
   let {
@@ -24,6 +25,7 @@
     tooltip,
     onClose,
     onGoToConversation,
+    onRemove,
   }: Props = $props();
 
   // Get the type label and icon color
@@ -56,7 +58,7 @@
   }
 
   function handleRemoveAnnotation() {
-    // This will be implemented when we wire up the editor
+    onRemove?.();
     onClose();
   }
 </script>

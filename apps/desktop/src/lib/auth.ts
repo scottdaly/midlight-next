@@ -154,6 +154,58 @@ export const authClient = {
   async isAuthenticated(): Promise<boolean> {
     return await invoke<boolean>('auth_is_authenticated');
   },
+
+  /**
+   * Request password reset email
+   */
+  async forgotPassword(email: string): Promise<void> {
+    auth.setError(null);
+
+    try {
+      await invoke('auth_forgot_password', { email });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      auth.setError(message);
+      throw error;
+    }
+  },
+
+  /**
+   * Reset password with token
+   */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    auth.setError(null);
+
+    try {
+      await invoke('auth_reset_password', { token, newPassword });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      auth.setError(message);
+      throw error;
+    }
+  },
+
+  /**
+   * Update user profile (email, password, display name)
+   */
+  async updateProfile(params: {
+    email?: string;
+    displayName?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }): Promise<User> {
+    auth.setError(null);
+
+    try {
+      const user = await invoke<User>('auth_update_profile', params);
+      auth.setUser(user);
+      return user;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      auth.setError(message);
+      throw error;
+    }
+  },
 };
 
 // ============================================================================

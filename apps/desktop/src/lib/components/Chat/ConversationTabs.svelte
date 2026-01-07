@@ -1,11 +1,13 @@
 <script lang="ts">
   import { ai } from '@midlight/stores';
+  import type { Snippet } from 'svelte';
 
   interface Props {
     onClose?: () => void;
+    headerRight?: Snippet;
   }
 
-  let { onClose }: Props = $props();
+  let { onClose, headerRight }: Props = $props();
 
   let isEditing = $state(false);
   let editTitle = $state('');
@@ -102,6 +104,11 @@
       </button>
     {/if}
   </div>
+
+  <!-- Header right slot (e.g., QuotaBadge) -->
+  {#if headerRight}
+    {@render headerRight()}
+  {/if}
 
   <!-- Action buttons -->
   <div class="flex items-center gap-0.5 flex-shrink-0">

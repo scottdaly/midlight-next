@@ -90,7 +90,12 @@
   });
 
   function getFileName(path: string): string {
-    return path.split('/').pop() || path;
+    let name = path.split('/').pop() || path;
+    // Hide .midlight extension from users
+    if (name.endsWith('.midlight')) {
+      name = name.slice(0, -9);
+    }
+    return name;
   }
 </script>
 

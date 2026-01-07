@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ai, activeConversation, fileSystem, auth } from '@midlight/stores';
+  import { ai, activeConversation, fileSystem, auth, subscription, isQuotaExceeded, showQuotaWarning, isFreeTier } from '@midlight/stores';
   import type { LLMProvider } from '@midlight/core';
   import type { FileNode } from '@midlight/core/types';
   import { Markdown } from '@midlight/ui';
@@ -8,8 +8,13 @@
   import ContextPills from './Chat/ContextPills.svelte';
   import ToolActionsGroup from './Chat/ToolActionsGroup.svelte';
   import ThinkingSteps from './Chat/ThinkingSteps.svelte';
+  import QuotaBadge from './Chat/QuotaBadge.svelte';
+  import QuotaWarningBanner from './Chat/QuotaWarningBanner.svelte';
+  import QuotaExceededModal from './QuotaExceededModal.svelte';
+  import UpgradeModal from './UpgradeModal.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { authClient } from '$lib/auth';
+  import { subscriptionClient } from '$lib/subscription';
 
   interface Props {
     onOpenAuth?: () => void;
@@ -17,6 +22,10 @@
   }
 
   let { onOpenAuth, onClose }: Props = $props();
+
+  // Quota modal states
+  let showQuotaExceeded = $state(false);
+  let showUpgrade = $state(false);
 
   let inputValue = $state('');
   let messagesContainer: HTMLDivElement;
@@ -73,6 +82,13 @@
   $effect(() => {
     if ($auth.isAuthenticated && !availableModels && !modelsLoading) {
       fetchModels();
+    }
+  });
+
+  // Initialize subscription data when authenticated
+  $effect(() => {
+    if ($auth.isAuthenticated && !$subscription.quota && !$subscription.isLoading) {
+      subscriptionClient.init().catch(console.error);
     }
   });
 
@@ -249,6 +265,12 @@
     e.preventDefault();
     if (!inputValue.trim() || $ai.isStreaming) return;
 
+    // Check quota before sending (only for free tier)
+    if ($isFreeTier && $isQuotaExceeded) {
+      showQuotaExceeded = true;
+      return;
+    }
+
     const message = inputValue.trim();
     inputValue = '';
 
@@ -263,6 +285,15 @@
     } else {
       await ai.sendMessage(message);
     }
+
+    // Refresh quota after message (for free tier)
+    if ($isFreeTier) {
+      subscriptionClient.fetchQuota().catch(console.error);
+    }
+  }
+
+  function handleOpenUpgrade() {
+    showUpgrade = true;
   }
 
   function toggleAgentMode() {
@@ -322,7 +353,19 @@
 {:else}
   <div class="h-full flex flex-col">
     <!-- Header with ConversationTabs -->
-    <ConversationTabs {onClose} />
+    <ConversationTabs {onClose}>
+      <!-- Quota badge in header slot -->
+      {#snippet headerRight()}
+        {#if $isFreeTier}
+          <QuotaBadge compact />
+        {/if}
+      {/snippet}
+    </ConversationTabs>
+
+    <!-- Quota Warning Banner -->
+    {#if $isFreeTier && $showQuotaWarning}
+      <QuotaWarningBanner onUpgrade={handleOpenUpgrade} />
+    {/if}
 
     <!-- Messages -->
     <div bind:this={messagesContainer} class="flex-1 overflow-auto px-4 pt-4 pb-2 space-y-4">
@@ -554,3 +597,15 @@
     </div>
   </div>
 {/if}
+
+<!-- Modals -->
+<QuotaExceededModal
+  open={showQuotaExceeded}
+  onClose={() => showQuotaExceeded = false}
+  onUpgrade={handleOpenUpgrade}
+/>
+
+<UpgradeModal
+  open={showUpgrade}
+  onClose={() => showUpgrade = false}
+/>

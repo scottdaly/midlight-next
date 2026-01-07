@@ -84,9 +84,18 @@ pub struct StreamErrorEvent {
 // Commands
 // ============================================================================
 
+/// Emit session expired event when AUTH_REQUIRED error occurs
+fn emit_session_expired_if_auth_error(app: &AppHandle, error: &LLMError) {
+    if error.code == "AUTH_REQUIRED" {
+        debug!("Emitting auth:session-expired event due to AUTH_REQUIRED error");
+        let _ = app.emit("auth:session-expired", ());
+    }
+}
+
 /// Send a chat message (non-streaming)
 #[tauri::command]
 pub async fn llm_chat(
+    app: AppHandle,
     options: ChatOptions,
     auth_token: Option<String>,
 ) -> Result<ChatResponse, String> {
@@ -111,7 +120,10 @@ pub async fn llm_chat(
     LLM_SERVICE
         .chat(request, auth_token.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            emit_session_expired_if_auth_error(&app, &e);
+            e.to_string()
+        })
 }
 
 /// Send a streaming chat message
@@ -174,6 +186,7 @@ pub async fn llm_chat_stream(
             Ok(())
         }
         Err(error) => {
+            emit_session_expired_if_auth_error(&app, &error);
             let event = StreamErrorEvent {
                 stream_id: stream_id.clone(),
                 error: error.clone(),
@@ -189,6 +202,7 @@ pub async fn llm_chat_stream(
 /// Send a chat message with tools (non-streaming)
 #[tauri::command]
 pub async fn llm_chat_with_tools(
+    app: AppHandle,
     options: ChatWithToolsOptions,
     auth_token: Option<String>,
 ) -> Result<ChatResponse, String> {
@@ -217,7 +231,10 @@ pub async fn llm_chat_with_tools(
     LLM_SERVICE
         .chat_with_tools(request, auth_token.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            emit_session_expired_if_auth_error(&app, &e);
+            e.to_string()
+        })
 }
 
 /// Send a streaming chat message with tools
@@ -285,6 +302,7 @@ pub async fn llm_chat_with_tools_stream(
             Ok(())
         }
         Err(error) => {
+            emit_session_expired_if_auth_error(&app, &error);
             let event = StreamErrorEvent {
                 stream_id: stream_id.clone(),
                 error: error.clone(),
