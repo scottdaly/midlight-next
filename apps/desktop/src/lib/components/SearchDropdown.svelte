@@ -31,14 +31,49 @@
   // Derived state for files
   const allFiles = $derived(flattenFiles($fileSystem.files));
 
+  // Search result with score for ranking
+  interface SearchResult {
+    file: FileNode;
+    score: number;
+    matchStart: number;
+  }
+
   const filteredFiles = $derived.by(() => {
     if (!query.trim()) {
       return allFiles.slice(0, 15);
     }
     const lowerQuery = query.toLowerCase();
-    return allFiles
-      .filter(file => file.name.toLowerCase().includes(lowerQuery))
-      .slice(0, 15);
+
+    // Score and filter files
+    const results: SearchResult[] = [];
+    for (const file of allFiles) {
+      const name = file.name.toLowerCase();
+      const index = name.indexOf(lowerQuery);
+
+      if (index === -1) continue;
+
+      // Score: prefer matches at start, then word boundaries
+      let score = 100 - index; // Earlier = better
+      if (index === 0) score += 50; // Starts with query
+      if (index > 0) {
+        const prevChar = name[index - 1];
+        if (prevChar === '-' || prevChar === '_' || prevChar === '.') {
+          score += 25; // Word boundary
+        }
+      }
+      // Boost exact name matches
+      if (name === lowerQuery || name.replace(/\.(md|midlight)$/, '') === lowerQuery) {
+        score += 100;
+      }
+
+      results.push({ file, score, matchStart: index });
+    }
+
+    // Sort by score (highest first) and return files
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15)
+      .map(r => r.file);
   });
 
   // Reset selection when results change

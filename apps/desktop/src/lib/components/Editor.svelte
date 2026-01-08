@@ -6,8 +6,10 @@
   import Underline from '@tiptap/extension-underline';
   import TextAlign from '@tiptap/extension-text-align';
   import TextStyle from '@tiptap/extension-text-style';
-  import { fileSystem, activeFile, editor as editorStore, ai, inlineEditState, stagedEdit, hasStagedEdit } from '@midlight/stores';
+  import { fileSystem, activeFile, editor as editorStore, ai, inlineEditState, stagedEdit, hasStagedEdit, scheduleWalWrite, cancelWalWrite, toastStore } from '@midlight/stores';
   import type { TiptapDocument } from '@midlight/core/types';
+  import { recoveryClient } from '$lib/recovery';
+  import { fileWatcherClient } from '$lib/fileWatcher';
   import InlineEditPrompt from './Editor/InlineEditPrompt.svelte';
   import InlineDiff from './Editor/InlineDiff.svelte';
   import AnnotationPopover from './Editor/AnnotationPopover.svelte';
@@ -164,11 +166,44 @@
         fileSystem.setEditorContent(json);
         fileSystem.setIsDirty(true);
 
+        // Schedule WAL write for crash recovery
+        const workspaceRoot = $fileSystem.rootDir;
+        const filePath = $activeFile?.path;
+        if (workspaceRoot && filePath) {
+          const content = JSON.stringify(json);
+          scheduleWalWrite(filePath, content, async (fileKey, walContent) => {
+            try {
+              await recoveryClient.writeWal(workspaceRoot, fileKey, walContent);
+            } catch (error) {
+              console.error('WAL write failed:', error);
+            }
+          });
+        }
+
         // Debounced auto-save
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
-          if ($activeFile) {
-            await fileSystem.save('interval');
+          if ($activeFile && workspaceRoot) {
+            try {
+              // Mark file as being saved to ignore file watcher events
+              await fileWatcherClient.markSaving(workspaceRoot, $activeFile.path);
+              try {
+                await fileSystem.save('interval');
+                // Clear WAL after successful save
+                cancelWalWrite($activeFile.path);
+                try {
+                  await recoveryClient.clearWal(workspaceRoot, $activeFile.path);
+                } catch (error) {
+                  console.error('Failed to clear WAL after save:', error);
+                }
+              } finally {
+                // Always clear the saving mark
+                await fileWatcherClient.clearSaving(workspaceRoot, $activeFile.path);
+              }
+            } catch (error) {
+              toastStore.error('Failed to auto-save document');
+              console.error('Auto-save failed:', error);
+            }
           }
         }, 3000);
       },
@@ -181,6 +216,10 @@
   // Cleanup on destroy
   onDestroy(() => {
     if (saveTimeout) clearTimeout(saveTimeout);
+    // Cancel any pending WAL writes for the current file
+    if ($activeFile?.path) {
+      cancelWalWrite($activeFile.path);
+    }
     editorStore.set(null);
     editor?.destroy();
   });

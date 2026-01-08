@@ -13,6 +13,7 @@ use super::import_security::{is_path_safe, sanitize_relative_path, ImportConfig}
 
 /// Statistics from a completed transaction
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by callers after commit()
 pub struct TransactionStats {
     pub files_staged: usize,
     pub bytes_written: u64,
@@ -72,11 +73,13 @@ impl ImportTransaction {
     }
 
     /// Get the staging directory path
+    #[allow(dead_code)] // Used in tests
     pub fn staging_dir(&self) -> &Path {
         &self.staging_dir
     }
 
     /// Get the destination path
+    #[allow(dead_code)] // Used in tests
     pub fn dest_path(&self) -> &Path {
         &self.dest_path
     }
@@ -158,6 +161,7 @@ impl ImportTransaction {
     /// Verify a copied file using SHA-256 checksum
     ///
     /// Only recommended for large files (> LARGE_FILE_THRESHOLD).
+    #[allow(dead_code)] // Used in tests
     pub fn verify_copy(&self, source: &Path, staged_path: &Path) -> Result<bool, ImportError> {
         let source_hash = compute_file_hash(source)?;
         let staged_hash = compute_file_hash(staged_path)?;
@@ -234,6 +238,7 @@ impl ImportTransaction {
     }
 
     /// Get current transaction statistics
+    #[allow(dead_code)] // Public API for callers
     pub fn stats(&self) -> TransactionStats {
         TransactionStats {
             files_staged: self.staged_files.len(),
@@ -257,6 +262,7 @@ impl Drop for ImportTransaction {
 }
 
 /// Compute SHA-256 hash of a file
+#[allow(dead_code)] // Used by verify_copy
 fn compute_file_hash(path: &Path) -> Result<String, ImportError> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -277,6 +283,7 @@ fn compute_file_hash(path: &Path) -> Result<String, ImportError> {
 /// Validate that there's enough disk space for an import
 ///
 /// Checks available space and requires a buffer of 10% beyond the required size.
+#[allow(dead_code)] // Scaffolded for future use
 pub fn validate_disk_space(dest_path: &Path, required_bytes: u64) -> Result<(), ImportError> {
     // Get available space on the filesystem
     // This is platform-specific, using a simple approach for now

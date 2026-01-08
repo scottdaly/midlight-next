@@ -9,7 +9,6 @@ use docx_rs::{
 use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 // ============================================================================
 // Types - Tiptap Document Structure
@@ -386,15 +385,8 @@ fn create_heading(node: &TiptapNode) -> Paragraph {
 
 #[derive(Clone)]
 struct ListContext {
-    list_type: ListType,
     level: i32,
     numbering_id: u32,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum ListType {
-    Bullet,
-    Ordered,
 }
 
 /// Processes a list item, handling nested lists
@@ -449,7 +441,6 @@ fn process_bullet_list(node: &TiptapNode, level: i32, numbering_id: u32) -> Vec<
     for list_item in &node.content {
         if list_item.node_type == "listItem" {
             let context = ListContext {
-                list_type: ListType::Bullet,
                 level,
                 numbering_id,
             };
@@ -467,7 +458,6 @@ fn process_ordered_list(node: &TiptapNode, level: i32, numbering_id: u32) -> Vec
     for list_item in &node.content {
         if list_item.node_type == "listItem" {
             let context = ListContext {
-                list_type: ListType::Ordered,
                 level,
                 numbering_id,
             };
@@ -481,33 +471,6 @@ fn process_ordered_list(node: &TiptapNode, level: i32, numbering_id: u32) -> Vec
 // ============================================================================
 // Image Processing
 // ============================================================================
-
-/// Parses base64 data URL and extracts image data
-fn parse_data_url(data_url: &str) -> Option<(Vec<u8>, &'static str)> {
-    if !data_url.starts_with("data:image/") {
-        return None;
-    }
-
-    // Find base64 marker
-    let base64_marker = ";base64,";
-    let marker_pos = data_url.find(base64_marker)?;
-
-    // Extract MIME type
-    let mime_type = &data_url[11..marker_pos]; // Skip "data:image/"
-    let extension = match mime_type {
-        "png" => "png",
-        "jpeg" | "jpg" => "jpg",
-        "gif" => "gif",
-        "bmp" => "bmp",
-        _ => "png",
-    };
-
-    // Extract and decode base64 data
-    let base64_data = &data_url[marker_pos + base64_marker.len()..];
-    let image_data = BASE64.decode(base64_data).ok()?;
-
-    Some((image_data, extension))
-}
 
 /// Creates a paragraph with an image (placeholder - docx-rs image support is limited)
 fn create_image_paragraph(node: &TiptapNode) -> Paragraph {

@@ -7,6 +7,9 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
+use commands::error_reporter::ErrorReporterState;
+use commands::file_watcher::FileWatcherState;
+use commands::recovery::RecoveryState;
 use services::workspace_manager::WorkspaceManagerRegistry;
 
 /// Application state shared across all commands
@@ -48,6 +51,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::new())
+        .manage(RecoveryState::new())
+        .manage(FileWatcherState::new())
+        .manage(ErrorReporterState::default())
         .invoke_handler(tauri::generate_handler![
             // File system commands
             commands::fs::get_default_workspace,
@@ -126,6 +132,24 @@ pub fn run() {
             commands::import::export_pdf,
             commands::export::export_select_save_path,
             commands::export::export_to_docx,
+            // Recovery commands
+            commands::recovery::recovery_check,
+            commands::recovery::recovery_write_wal,
+            commands::recovery::recovery_clear_wal,
+            commands::recovery::recovery_has_recovery,
+            commands::recovery::recovery_get_content,
+            commands::recovery::recovery_discard,
+            commands::recovery::recovery_discard_all,
+            commands::recovery::recovery_has_unique_content,
+            // File watcher commands
+            commands::file_watcher::file_watcher_start,
+            commands::file_watcher::file_watcher_stop,
+            commands::file_watcher::file_watcher_mark_saving,
+            commands::file_watcher::file_watcher_clear_saving,
+            // Error reporter commands
+            commands::error_reporter::error_reporter_set_enabled,
+            commands::error_reporter::error_reporter_get_status,
+            commands::error_reporter::error_reporter_report,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

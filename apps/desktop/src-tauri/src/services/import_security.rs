@@ -9,8 +9,10 @@ use unicode_normalization::UnicodeNormalization;
 use super::error::ImportError;
 
 /// Configuration constants for import security
+#[allow(dead_code)] // Security config preserved for future use
 pub struct ImportConfig;
 
+#[allow(dead_code)] // Security constants preserved for future use
 impl ImportConfig {
     /// Maximum content size for regex processing (10MB)
     pub const MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024;
@@ -67,6 +69,7 @@ impl AllowedExtension {
     }
 
     /// Determine the extension type from a filename
+    #[allow(dead_code)] // Useful for file type detection
     pub fn from_filename(filename: &str) -> Option<AllowedExtension> {
         if AllowedExtension::Markdown.matches(filename) {
             Some(AllowedExtension::Markdown)
@@ -302,6 +305,7 @@ pub fn is_path_safe(dest_path: &Path, base_path: &Path) -> bool {
 }
 
 /// Validate a path string for basic safety
+#[allow(dead_code)] // Security validation preserved for future use
 pub fn validate_path(input_path: &str) -> Result<(), ImportError> {
     if input_path.is_empty() {
         return Err(ImportError::InvalidPath("Path cannot be empty".into()));
@@ -426,6 +430,7 @@ pub fn safe_parse_front_matter(content: &str) -> Result<Option<FrontMatter>, Imp
 }
 
 /// Check if a URL is an external URL (http, https, mailto)
+#[allow(dead_code)] // Security check preserved for future use
 pub fn is_external_url(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.starts_with("http://")
@@ -434,6 +439,7 @@ pub fn is_external_url(url: &str) -> bool {
 }
 
 /// Check if a URL uses a dangerous scheme
+#[allow(dead_code)] // Security check preserved for future use
 pub fn is_dangerous_scheme(url: &str) -> bool {
     let lower = url.to_lowercase();
     lower.starts_with("javascript:")
@@ -461,6 +467,7 @@ pub fn sanitize_csv_cell(cell: &str) -> String {
 }
 
 /// Format a system error into a user-friendly message
+#[allow(dead_code)] // Error formatting preserved for future use
 pub fn format_user_error(error: &std::io::Error) -> String {
     match error.kind() {
         std::io::ErrorKind::PermissionDenied => {

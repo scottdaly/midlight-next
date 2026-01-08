@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, fileSystem, exportStore, activeFile } from '@midlight/stores';
+  import { settings, fileSystem, exportStore, activeFile, toastStore } from '@midlight/stores';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { exportClient, type TiptapDocument } from '$lib/export';
@@ -85,8 +85,10 @@
   async function handleExportPdf() {
     try {
       await exportClient.exportToPdf();
+      toastStore.success('PDF export started');
     } catch (e) {
       console.error('PDF export failed:', e);
+      toastStore.error('Failed to export PDF');
     }
   }
 
@@ -96,14 +98,14 @@
     const fsState = $fileSystem;
 
     if (!file) {
-      console.warn('No active file to export');
+      toastStore.warning('No document to export');
       return;
     }
 
     // Get the editor content from fileSystem state (not from FileNode)
     const content = fsState.editorContent;
     if (!content) {
-      console.warn('No document content to export');
+      toastStore.warning('No document content to export');
       return;
     }
 
@@ -125,11 +127,15 @@
 
       if (result.success) {
         exportStore.completeExport();
+        toastStore.success('Document exported to DOCX');
       } else {
         exportStore.failExport(result.error || 'Export failed');
+        toastStore.error(result.error || 'Failed to export document');
       }
     } catch (e) {
-      exportStore.failExport(e instanceof Error ? e.message : String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      exportStore.failExport(errorMsg);
+      toastStore.error('Export failed: ' + errorMsg);
     }
   }
 </script>

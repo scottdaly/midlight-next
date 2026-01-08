@@ -38,7 +38,7 @@ const defaultSettings: SettingsState = {
   autoSave: true,
   autoSaveInterval: 3000,
   showLineNumbers: false,
-  errorReportingEnabled: true,
+  errorReportingEnabled: false, // Opt-in only for privacy
   apiKey: '',
 };
 

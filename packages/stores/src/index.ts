@@ -85,3 +85,44 @@ export type {
   ExportProgress,
   ExportState,
 } from './import.js';
+export {
+  recoveryStore,
+  hasPendingRecoveries,
+  showRecoveryDialog,
+  pendingRecoveries,
+  isCheckingRecovery,
+  scheduleWalWrite,
+  cancelWalWrite,
+  flushWalWrite,
+  clearAllWalWrites,
+} from './recovery.js';
+export type { RecoveryFile, RecoveryDecision, RecoveryState } from './recovery.js';
+export {
+  toastStore,
+  toasts,
+  visibleToasts,
+  hiddenToastCount,
+  hasToasts,
+} from './toast.js';
+export type { ToastType, ToastAction, Toast, ToastState } from './toast.js';
+export {
+  fileWatcherStore,
+  hasPendingExternalChanges,
+  pendingChangeCount,
+  showExternalChangeDialog,
+  pendingExternalChanges,
+  selectedExternalChange,
+  isFileWatching,
+  changesByType,
+} from './fileWatcher.js';
+export type { ChangeType, ExternalChange, FileWatcherState } from './fileWatcher.js';
+export {
+  shortcuts,
+  allShortcuts,
+  shortcutsByCategory,
+  hasCustomizations,
+  getModifierName,
+  getDisplayKey,
+  matchesShortcut,
+} from './shortcuts.js';
+export type { Shortcut, ShortcutCategory, ShortcutState } from './shortcuts.js';

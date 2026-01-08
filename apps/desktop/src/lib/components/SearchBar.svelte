@@ -26,10 +26,11 @@
     }
   }
 
-  // Global shortcut
+  // Global shortcut (Ctrl+K or Ctrl+P for search)
   $effect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      // Ctrl+K or Ctrl+P to open search
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'p')) {
         e.preventDefault();
         isOpen = true;
         // Focus next tick

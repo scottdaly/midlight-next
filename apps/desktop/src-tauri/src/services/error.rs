@@ -40,6 +40,7 @@ pub enum MidlightError {
 
 /// Import-specific errors
 #[derive(Error, Debug, Clone)]
+#[allow(dead_code)] // Some variants reserved for future error handling
 pub enum ImportError {
     #[error("Invalid filename: {0}")]
     InvalidFilename(String),
@@ -106,4 +107,3 @@ impl serde::Serialize for ImportError {
 }
 
 pub type Result<T> = std::result::Result<T, MidlightError>;
-pub type ImportResult<T> = std::result::Result<T, ImportError>;

@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 const DEFAULT_BASE_URL: &str = "https://midlight.ai";
 
@@ -522,10 +522,10 @@ impl LLMService {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut accumulated_content = String::new();
-        let mut accumulated_tool_calls: Vec<ToolCall> = Vec::new();
+        let accumulated_tool_calls: Vec<ToolCall> = Vec::new();
         let mut final_usage: Option<UsageInfo> = None;
-        let mut finish_reason = "stop".to_string();
-        let mut response_id = uuid::Uuid::new_v4().to_string();
+        let finish_reason = "stop".to_string();
+        let response_id = uuid::Uuid::new_v4().to_string();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| LLMError {

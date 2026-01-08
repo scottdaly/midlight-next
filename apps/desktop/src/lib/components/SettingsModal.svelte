@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { settings, auth, subscription, isFreeTier, quotaDisplay, quotaPercentUsed } from '@midlight/stores';
+  import { settings, auth, subscription, isFreeTier, quotaDisplay, quotaPercentUsed, shortcutsByCategory, getDisplayKey } from '@midlight/stores';
   import type { Theme } from '@midlight/stores';
   import { authClient } from '$lib/auth';
   import { subscriptionClient } from '$lib/subscription';
+  import { errorReporter } from '$lib/errorReporter';
   import ThemePreview from './ThemePreview.svelte';
 
   interface Props {
@@ -85,7 +86,7 @@
     }
   }
 
-  type Tab = 'appearance' | 'editor' | 'ai' | 'general';
+  type Tab = 'appearance' | 'editor' | 'ai' | 'general' | 'shortcuts';
   let activeTab = $state<Tab>('appearance');
 
   const tabs: { id: Tab; label: string }[] = [
@@ -93,7 +94,17 @@
     { id: 'editor', label: 'Editor' },
     { id: 'ai', label: 'AI' },
     { id: 'general', label: 'General' },
+    { id: 'shortcuts', label: 'Shortcuts' },
   ];
+
+  const categoryLabels: Record<string, string> = {
+    file: 'File',
+    editing: 'Editing',
+    view: 'View',
+    navigation: 'Navigation',
+    ai: 'AI',
+    other: 'Other',
+  };
 
   const themes: Theme[] = ['light', 'dark', 'midnight', 'sepia', 'forest', 'cyberpunk', 'coffee', 'system'];
 
@@ -187,6 +198,18 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              {:else if tab.id === 'shortcuts'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="20" height="16" x="2" y="4" rx="2" ry="2"></rect>
+                  <path d="M6 8h.001"></path>
+                  <path d="M10 8h.001"></path>
+                  <path d="M14 8h.001"></path>
+                  <path d="M18 8h.001"></path>
+                  <path d="M8 12h.001"></path>
+                  <path d="M12 12h.001"></path>
+                  <path d="M16 12h.001"></path>
+                  <path d="M7 16h10"></path>
                 </svg>
               {/if}
               {tab.label}
@@ -595,10 +618,14 @@
               <div class="flex items-center justify-between py-3 border-b border-border">
                 <div>
                   <div class="text-sm font-medium">Error Reporting</div>
-                  <div class="text-xs text-muted-foreground">Send anonymous error reports to help improve the app</div>
+                  <div class="text-xs text-muted-foreground">Help improve Midlight by sending anonymous error reports</div>
                 </div>
                 <button
-                  onclick={() => settings.setErrorReportingEnabled(!$settings.errorReportingEnabled)}
+                  onclick={async () => {
+                    const newValue = !$settings.errorReportingEnabled;
+                    settings.setErrorReportingEnabled(newValue);
+                    await errorReporter.setEnabled(newValue);
+                  }}
                   role="switch"
                   aria-checked={$settings.errorReportingEnabled}
                   aria-label="Toggle error reporting"
@@ -609,6 +636,41 @@
                   ></span>
                 </button>
               </div>
+              {#if $settings.errorReportingEnabled}
+                <div class="py-2 px-3 bg-muted/50 rounded-md">
+                  <p class="text-xs text-muted-foreground">
+                    Error reports include: error type, app version, OS info. Reports never include file contents, names, or personal information.
+                  </p>
+                </div>
+              {/if}
+            </div>
+          {:else if activeTab === 'shortcuts'}
+            <!-- Keyboard Shortcuts Reference -->
+            <div class="space-y-6">
+              {#each Object.entries($shortcutsByCategory) as [category, categoryShortcuts]}
+                {#if categoryShortcuts.length > 0}
+                  <div>
+                    <h4 class="text-sm font-medium mb-3 text-muted-foreground uppercase tracking-wide">
+                      {categoryLabels[category] || category}
+                    </h4>
+                    <div class="space-y-2">
+                      {#each categoryShortcuts as shortcut}
+                        <div class="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-md">
+                          <span class="text-sm">{shortcut.description}</span>
+                          <kbd class="px-2 py-1 text-xs font-mono bg-background border border-border rounded shadow-sm">
+                            {getDisplayKey(shortcut.keys)}
+                          </kbd>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              {/each}
+              {#if Object.values($shortcutsByCategory).every(s => s.length === 0)}
+                <p class="text-sm text-muted-foreground text-center py-8">
+                  No keyboard shortcuts registered
+                </p>
+              {/if}
             </div>
           {/if}
         </div>
