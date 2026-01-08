@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { settings, fileSystem } from '@midlight/stores';
+  import { settings, fileSystem, exportStore, activeFile } from '@midlight/stores';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { exportClient, type TiptapDocument } from '$lib/export';
 
   let openMenu: string | null = $state(null);
   let menuRef: HTMLDivElement | null = $state(null);
@@ -63,8 +64,72 @@
       case 'theme-cyberpunk': settings.setTheme('cyberpunk'); break;
       case 'theme-coffee': settings.setTheme('coffee'); break;
       case 'theme-system': settings.setTheme('system'); break;
+      // Import
+      case 'import-obsidian':
+      case 'import-notion':
+      case 'import-docx':
+        window.dispatchEvent(new CustomEvent('midlight:open-import'));
+        break;
+      // Export
+      case 'export-pdf':
+        await handleExportPdf();
+        break;
+      case 'export-docx':
+        await handleExportDocx();
+        break;
       default:
         console.log('Action not implemented:', action);
+    }
+  }
+
+  async function handleExportPdf() {
+    try {
+      await exportClient.exportToPdf();
+    } catch (e) {
+      console.error('PDF export failed:', e);
+    }
+  }
+
+  async function handleExportDocx() {
+    // Get the active file and content
+    const file = $activeFile;
+    const fsState = $fileSystem;
+
+    if (!file) {
+      console.warn('No active file to export');
+      return;
+    }
+
+    // Get the editor content from fileSystem state (not from FileNode)
+    const content = fsState.editorContent;
+    if (!content) {
+      console.warn('No document content to export');
+      return;
+    }
+
+    // Get document name without extension
+    const docName = file.name.replace(/\.(md|midlight)$/, '') || 'document';
+
+    // Start export
+    exportStore.startExport('docx');
+
+    try {
+      const result = await exportClient.export(
+        content,
+        docName,
+        'docx',
+        (progress) => {
+          exportStore.updateProgress(progress);
+        }
+      );
+
+      if (result.success) {
+        exportStore.completeExport();
+      } else {
+        exportStore.failExport(result.error || 'Export failed');
+      }
+    } catch (e) {
+      exportStore.failExport(e instanceof Error ? e.message : String(e));
     }
   }
 </script>

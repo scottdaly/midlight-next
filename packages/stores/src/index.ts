@@ -61,3 +61,27 @@ export type {
   PendingChange,
   AgentState,
 } from './agent.js';
+export {
+  importStore,
+  isImporting,
+  currentImport,
+  importProgress,
+  exportStore,
+  isExporting,
+  exportProgress,
+  exportError,
+} from './import.js';
+export type {
+  ImportSourceType,
+  ImportPhase,
+  ImportStep,
+  ImportErrorInfo,
+  ImportWarningInfo,
+  ImportProgress,
+  ImportResult,
+  CurrentImport,
+  ImportState,
+  ExportType,
+  ExportProgress,
+  ExportState,
+} from './import.js';

@@ -114,6 +114,18 @@ pub fn run() {
             commands::auth::subscription_get_prices,
             commands::auth::subscription_create_checkout,
             commands::auth::subscription_create_portal,
+            // Import commands
+            commands::import::import_select_folder,
+            commands::import::import_detect_source_type,
+            commands::import::import_analyze_obsidian,
+            commands::import::import_analyze_notion,
+            commands::import::import_obsidian,
+            commands::import::import_notion,
+            commands::import::import_cancel,
+            // Export commands
+            commands::import::export_pdf,
+            commands::export::export_select_save_path,
+            commands::export::export_to_docx,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

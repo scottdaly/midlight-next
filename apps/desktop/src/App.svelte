@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -7,6 +8,7 @@
   import { TauriStorageAdapter } from '$lib/tauri';
   import { createTauriLLMClient } from '$lib/llm';
   import { authClient, startAuthEventListeners, stopAuthEventListeners } from '$lib/auth';
+  import { subscriptionClient } from '$lib/subscription';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TabBar from '$lib/components/TabBar.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
@@ -102,10 +104,25 @@
     const handleMenuAction = () => openFolder();
     window.addEventListener('midlight:open-workspace', handleMenuAction);
 
+    // Refresh subscription data when window regains focus
+    // This catches post-checkout updates when user returns from Stripe
+    const handleWindowFocus = async () => {
+      const authState = get(auth);
+      if (authState.isAuthenticated) {
+        try {
+          await subscriptionClient.refresh();
+        } catch (error) {
+          console.error('Failed to refresh subscription on focus:', error);
+        }
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+
     return () => {
       unsubscribe();
       stopAuthEventListeners();
       window.removeEventListener('midlight:open-workspace', handleMenuAction);
+      window.removeEventListener('focus', handleWindowFocus);
     };
   });
 
