@@ -124,6 +124,96 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      - name: Debug Azure Trusted Signing Access
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+        run: |
+          Write-Host "=== Debug: Checking Azure Trusted Signing Access ==="
+          Write-Host ""
+          Write-Host "Endpoint: $env:AZURE_ENDPOINT"
+          Write-Host "Signing Account: $env:AZURE_SIGNING_ACCOUNT"
+          Write-Host "Certificate Profile: $env:AZURE_CERT_PROFILE"
+          Write-Host "Tenant ID length: $($env:AZURE_TENANT_ID.Length)"
+          Write-Host "Client ID length: $($env:AZURE_CLIENT_ID.Length)"
+          Write-Host "Client Secret length: $($env:AZURE_CLIENT_SECRET.Length)"
+          Write-Host ""
+
+          # Step 1: Get access token
+          Write-Host "=== Step 1: Getting access token ==="
+          $tokenBody = @{
+            grant_type = "client_credentials"
+            client_id = $env:AZURE_CLIENT_ID
+            client_secret = $env:AZURE_CLIENT_SECRET
+            scope = "https://codesigning.azure.net/.default"
+          }
+
+          try {
+            $tokenResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token" -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
+            Write-Host "✓ Successfully obtained access token"
+            $accessToken = $tokenResponse.access_token
+          } catch {
+            Write-Host "✗ Failed to get access token"
+            Write-Host "Error: $_"
+            Write-Host "Response: $($_.Exception.Response)"
+            exit 1
+          }
+
+          # Step 2: List certificate profiles
+          Write-Host ""
+          Write-Host "=== Step 2: Listing certificate profiles ==="
+          $headers = @{
+            Authorization = "Bearer $accessToken"
+          }
+
+          $profilesUrl = "$env:AZURE_ENDPOINT/codesigningaccounts/$env:AZURE_SIGNING_ACCOUNT/certificateprofiles?api-version=2022-06-15-preview"
+          Write-Host "URL: $profilesUrl"
+
+          try {
+            $profiles = Invoke-RestMethod -Uri $profilesUrl -Method GET -Headers $headers
+            Write-Host "✓ Successfully listed certificate profiles"
+            Write-Host "Profiles found:"
+            $profiles.value | ForEach-Object { Write-Host "  - $($_.name): $($_.status)" }
+          } catch {
+            Write-Host "✗ Failed to list certificate profiles"
+            Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
+            Write-Host "Error: $_"
+
+            # Try to get more error details
+            if ($_.Exception.Response) {
+              $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+              $reader.BaseStream.Position = 0
+              $responseBody = $reader.ReadToEnd()
+              Write-Host "Response body: $responseBody"
+            }
+          }
+
+          # Step 3: Check specific certificate profile
+          Write-Host ""
+          Write-Host "=== Step 3: Checking certificate profile '$env:AZURE_CERT_PROFILE' ==="
+          $profileUrl = "$env:AZURE_ENDPOINT/codesigningaccounts/$env:AZURE_SIGNING_ACCOUNT/certificateprofiles/$($env:AZURE_CERT_PROFILE)?api-version=2022-06-15-preview"
+          Write-Host "URL: $profileUrl"
+
+          try {
+            $profile = Invoke-RestMethod -Uri $profileUrl -Method GET -Headers $headers
+            Write-Host "✓ Certificate profile found"
+            Write-Host "  Name: $($profile.name)"
+            Write-Host "  Status: $($profile.status)"
+            Write-Host "  Profile Type: $($profile.profileType)"
+          } catch {
+            Write-Host "✗ Failed to get certificate profile"
+            Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
+            Write-Host "Error: $_"
+          }
+
+          Write-Host ""
+          Write-Host "=== Debug complete ==="
+
       - name: Sign Windows MSI with Trusted Signing
         uses: azure/trusted-signing-action@v0.5.0
         with:
