@@ -25,9 +25,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "@midlight/core": "workspace:*",
     "svelte": "^5.16.0"
-  },
-  "peerDependencies": {
-    "@midlight/core": "workspace:*"
   }
 }
