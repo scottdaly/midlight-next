@@ -11,6 +11,7 @@ use uuid::Uuid;
 // Tool Execution Types
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolExecution {
@@ -23,6 +24,7 @@ pub struct ToolExecution {
     pub completed_at: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolExecutionStatus {
@@ -60,6 +62,7 @@ pub struct SearchMatch {
     pub line: Option<u32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingChange {
@@ -682,14 +685,12 @@ impl AgentExecutor {
 
                             if has_code {
                                 formatted = format!("`{}`", formatted);
-                            } else {
-                                if has_bold && has_italic {
-                                    formatted = format!("***{}***", formatted);
-                                } else if has_bold {
-                                    formatted = format!("**{}**", formatted);
-                                } else if has_italic {
-                                    formatted = format!("*{}*", formatted);
-                                }
+                            } else if has_bold && has_italic {
+                                formatted = format!("***{}***", formatted);
+                            } else if has_bold {
+                                formatted = format!("**{}**", formatted);
+                            } else if has_italic {
+                                formatted = format!("*{}*", formatted);
                             }
                         }
 

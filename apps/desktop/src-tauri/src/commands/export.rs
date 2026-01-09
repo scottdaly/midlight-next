@@ -40,8 +40,8 @@ pub async fn export_select_save_path<R: Runtime>(
 
     app.dialog()
         .file()
-        .set_title(&format!("Export as {}", filter_name))
-        .set_file_name(&format!("{}.{}", default_name, extension))
+        .set_title(format!("Export as {}", filter_name))
+        .set_file_name(format!("{}.{}", default_name, extension))
         .add_filter(filter_name, &[extension])
         .save_file(move |result| {
             let _ = tx.send(result);

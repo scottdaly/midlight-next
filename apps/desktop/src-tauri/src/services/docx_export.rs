@@ -72,13 +72,7 @@ pub fn px_to_half_points(px: &str) -> usize {
     // Clamp to reasonable range: 1pt (2 half-points) to 200pt (400 half-points)
     let half_points = (numeric_value * 2.0).round() as usize;
 
-    if half_points < 2 {
-        2
-    } else if half_points > 400 {
-        400
-    } else {
-        half_points
-    }
+    half_points.clamp(2, 400)
 }
 
 /// Maps Tiptap alignment values to DOCX AlignmentType

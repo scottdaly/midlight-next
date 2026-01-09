@@ -435,13 +435,12 @@ pub async fn file_copy_to(
             fs::copy(&src_path, &dest_path)
                 .map(|_| ())
                 .map_err(|e| e.to_string())
-                .and_then(|_| {
+                .map(|_| {
                     // Copy sidecar if exists
                     let sidecar = format!("{}.sidecar.json", src_path);
                     if Path::new(&sidecar).exists() {
                         let _ = fs::copy(&sidecar, format!("{}.sidecar.json", dest_path.display()));
                     }
-                    Ok(())
                 })
         };
 
@@ -523,7 +522,7 @@ pub async fn file_move_to(
                     fs::remove_file(src).map_err(|e| e.to_string())
                 }
             })
-            .and_then(|_| {
+            .map(|_| {
                 // Move sidecar if exists
                 if src.is_file() || !src.exists() {
                     let sidecar = format!("{}.sidecar.json", src_path);
@@ -535,7 +534,6 @@ pub async fn file_move_to(
                         });
                     }
                 }
-                Ok(())
             });
 
         match result {

@@ -1,4 +1,8 @@
 // Midlight Desktop App - Tauri Backend
+#![allow(clippy::manual_strip)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::bind_instead_of_map)]
 
 mod commands;
 #[cfg(target_os = "macos")]
@@ -183,9 +187,9 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_menu_event(|app, event| {
+        .on_menu_event(|_app, _event| {
             #[cfg(target_os = "macos")]
-            menu::handle_menu_event(app, event.id().as_ref());
+            menu::handle_menu_event(_app, _event.id().as_ref());
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

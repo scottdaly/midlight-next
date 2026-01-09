@@ -154,7 +154,7 @@ pub fn sanitize_filename(filename: &str) -> Result<String, ImportError> {
     }
 
     // Remove trailing dots and spaces (Windows filesystem issue)
-    let trimmed = safe.trim_end_matches(|c| c == '.' || c == ' ');
+    let trimmed = safe.trim_end_matches(['.', ' ']);
     if trimmed.is_empty() {
         return Err(ImportError::InvalidFilename(
             "Filename cannot consist only of dots and spaces".into(),

@@ -179,7 +179,7 @@ impl RecoveryManager {
             let path = entry.path();
 
             // Only process .wal.json files
-            if !path.extension().map_or(false, |ext| ext == "json") {
+            if !path.extension().is_some_and(|ext| ext == "json") {
                 continue;
             }
 

@@ -26,6 +26,7 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolParameter {
@@ -539,9 +540,7 @@ impl LLMService {
                 let line = buffer[..newline_pos].to_string();
                 buffer = buffer[newline_pos + 1..].to_string();
 
-                if line.starts_with("data: ") {
-                    let data = &line[6..];
-
+                if let Some(data) = line.strip_prefix("data: ") {
                     if data == "[DONE]" {
                         let _ = tx
                             .send(StreamChunk {

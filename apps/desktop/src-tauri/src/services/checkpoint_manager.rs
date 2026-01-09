@@ -176,7 +176,7 @@ impl CheckpointManager {
         }
 
         // Generate checkpoint ID
-        let id = format!("cp-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+        let id = format!("cp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let timestamp = Utc::now().to_rfc3339();
 
         // Calculate stats

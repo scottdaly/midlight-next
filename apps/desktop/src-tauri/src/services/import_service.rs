@@ -223,12 +223,10 @@ pub fn detect_source_type(folder_path: &Path) -> Result<ImportSourceType, Import
     // Notion exports have filenames like "Page Title abc123def456.md"
     let uuid_pattern = Regex::new(r" [0-9a-f]{32}\.").expect("Invalid UUID regex");
 
-    for entry in WalkDir::new(folder_path).max_depth(2) {
-        if let Ok(entry) = entry {
-            if let Some(name) = entry.file_name().to_str() {
-                if uuid_pattern.is_match(name) {
-                    return Ok(ImportSourceType::Notion);
-                }
+    for entry in WalkDir::new(folder_path).max_depth(2).into_iter().flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if uuid_pattern.is_match(name) {
+                return Ok(ImportSourceType::Notion);
             }
         }
     }
@@ -517,9 +515,8 @@ pub fn analyze_notion_export(export_path: &Path) -> Result<ImportAnalysis, Impor
             || AllowedExtension::Attachment.matches(&file_name)
         {
             ImportFileType::Attachment
-        } else if AllowedExtension::Data.matches(&file_name) {
-            ImportFileType::Other // CSV files handled separately
         } else {
+            // CSV and other data files handled separately
             ImportFileType::Other
         };
 
@@ -733,7 +730,7 @@ pub fn csv_to_markdown_table(csv_content: &str) -> Result<String, ImportError> {
         .headers()
         .map_err(|e| ImportError::CsvParse(e.to_string()))?
         .iter()
-        .map(|h| sanitize_csv_cell(h))
+        .map(sanitize_csv_cell)
         .collect();
 
     if headers.is_empty() {
@@ -748,7 +745,7 @@ pub fn csv_to_markdown_table(csv_content: &str) -> Result<String, ImportError> {
     table.push_str(" |\n");
 
     // Separator row
-    table.push_str("|");
+    table.push('|');
     for _ in &headers {
         table.push_str(" --- |");
     }
@@ -758,7 +755,7 @@ pub fn csv_to_markdown_table(csv_content: &str) -> Result<String, ImportError> {
     for result in reader.records() {
         let record = result.map_err(|e| ImportError::CsvParse(e.to_string()))?;
         table.push_str("| ");
-        let cells: Vec<String> = record.iter().map(|c| sanitize_csv_cell(c)).collect();
+        let cells: Vec<String> = record.iter().map(sanitize_csv_cell).collect();
         table.push_str(&cells.join(" | "));
         table.push_str(" |\n");
     }

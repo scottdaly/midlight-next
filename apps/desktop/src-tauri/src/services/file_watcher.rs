@@ -191,6 +191,7 @@ impl FileWatcher {
     }
 
     /// Event processing loop
+    #[allow(clippy::too_many_arguments)]
     fn event_loop<R: Runtime>(
         rx: Receiver<notify::Result<Event>>,
         stop_rx: Receiver<()>,
