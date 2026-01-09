@@ -125,6 +125,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Debug Azure Trusted Signing Access
+        continue-on-error: true
         shell: pwsh
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -136,9 +137,14 @@ jobs:
         run: |
           Write-Host "=== Debug: Checking Azure Trusted Signing Access ==="
           Write-Host ""
-          Write-Host "Endpoint: $env:AZURE_ENDPOINT"
-          Write-Host "Signing Account: $env:AZURE_SIGNING_ACCOUNT"
-          Write-Host "Certificate Profile: $env:AZURE_CERT_PROFILE"
+
+          # Remove trailing slash from endpoint if present
+          $endpoint = $env:AZURE_ENDPOINT.TrimEnd('/')
+
+          Write-Host "Endpoint (raw): '$env:AZURE_ENDPOINT'"
+          Write-Host "Endpoint (trimmed): '$endpoint'"
+          Write-Host "Signing Account: '$env:AZURE_SIGNING_ACCOUNT'"
+          Write-Host "Certificate Profile: '$env:AZURE_CERT_PROFILE'"
           Write-Host "Tenant ID length: $($env:AZURE_TENANT_ID.Length)"
           Write-Host "Client ID length: $($env:AZURE_CLIENT_ID.Length)"
           Write-Host "Client Secret length: $($env:AZURE_CLIENT_SECRET.Length)"
@@ -161,17 +167,18 @@ jobs:
             Write-Host "✗ Failed to get access token"
             Write-Host "Error: $_"
             Write-Host "Response: $($_.Exception.Response)"
-            exit 1
+            Write-Host "(Continuing anyway to see actual signing error)"
           }
 
-          # Step 2: List certificate profiles
+          # Step 2: List certificate profiles (Azure Trusted Signing API)
           Write-Host ""
           Write-Host "=== Step 2: Listing certificate profiles ==="
           $headers = @{
             Authorization = "Bearer $accessToken"
           }
 
-          $profilesUrl = "$env:AZURE_ENDPOINT/codesigningaccounts/$env:AZURE_SIGNING_ACCOUNT/certificateprofiles?api-version=2022-06-15-preview"
+          # Try the new Trusted Signing API format
+          $profilesUrl = "$endpoint/codesigning/certificateProfiles?api-version=2024-02-05-preview"
           Write-Host "URL: $profilesUrl"
 
           try {
@@ -184,19 +191,23 @@ jobs:
             Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
             Write-Host "Error: $_"
 
-            # Try to get more error details
-            if ($_.Exception.Response) {
-              $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-              $reader.BaseStream.Position = 0
-              $responseBody = $reader.ReadToEnd()
-              Write-Host "Response body: $responseBody"
+            # Try alternate API format (older)
+            Write-Host ""
+            Write-Host "Trying alternate API format..."
+            $altUrl = "$endpoint/codesigningaccounts/$env:AZURE_SIGNING_ACCOUNT/certificateprofiles?api-version=2022-06-15-preview"
+            Write-Host "URL: $altUrl"
+            try {
+              $profiles = Invoke-RestMethod -Uri $altUrl -Method GET -Headers $headers
+              Write-Host "✓ Alternate format worked"
+            } catch {
+              Write-Host "✗ Alternate format also failed: $($_.Exception.Response.StatusCode.value__)"
             }
           }
 
           # Step 3: Check specific certificate profile
           Write-Host ""
           Write-Host "=== Step 3: Checking certificate profile '$env:AZURE_CERT_PROFILE' ==="
-          $profileUrl = "$env:AZURE_ENDPOINT/codesigningaccounts/$env:AZURE_SIGNING_ACCOUNT/certificateprofiles/$($env:AZURE_CERT_PROFILE)?api-version=2022-06-15-preview"
+          $profileUrl = "$endpoint/codesigning/certificateProfiles/$($env:AZURE_CERT_PROFILE)?api-version=2024-02-05-preview"
           Write-Host "URL: $profileUrl"
 
           try {
@@ -210,6 +221,13 @@ jobs:
             Write-Host "Status Code: $($_.Exception.Response.StatusCode.value__)"
             Write-Host "Error: $_"
           }
+
+          # Step 4: Try signing health check
+          Write-Host ""
+          Write-Host "=== Step 4: Checking signing capability ==="
+          $signUrl = "$endpoint/codesigning/certificateProfiles/$($env:AZURE_CERT_PROFILE)/sign?api-version=2024-02-05-preview"
+          Write-Host "Sign URL would be: $signUrl"
+          Write-Host "(Not actually signing - just showing the URL that would be used)"
 
           Write-Host ""
           Write-Host "=== Debug complete ==="
