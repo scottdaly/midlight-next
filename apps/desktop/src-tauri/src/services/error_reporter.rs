@@ -74,9 +74,7 @@ pub fn sanitize_message(message: &str) -> String {
 
     // 1. Unix file paths: /Users/username/... or /home/username/...
     let unix_path = Regex::new(r"/(Users|home)/[^/\s]+").unwrap();
-    result = unix_path
-        .replace_all(&result, "/$1/[REDACTED]")
-        .to_string();
+    result = unix_path.replace_all(&result, "/$1/[REDACTED]").to_string();
 
     // 2. Windows file paths: C:\Users\username\...
     let win_path = Regex::new(r"[A-Z]:\\Users\\[^\\\s]+").unwrap();
@@ -99,8 +97,8 @@ pub fn sanitize_message(message: &str) -> String {
     result = ip.replace_all(&result, "[IP]").to_string();
 
     // 6. Bearer tokens and API keys
-    let bearer = Regex::new(r"Bearer\s+[A-Za-z0-9\-_]+\.?[A-Za-z0-9\-_]*\.?[A-Za-z0-9\-_]*")
-        .unwrap();
+    let bearer =
+        Regex::new(r"Bearer\s+[A-Za-z0-9\-_]+\.?[A-Za-z0-9\-_]*\.?[A-Za-z0-9\-_]*").unwrap();
     result = bearer.replace_all(&result, "Bearer [TOKEN]").to_string();
 
     // 7. API keys (common patterns)
@@ -242,10 +240,7 @@ impl ErrorReporter {
                     if response.status().is_success() {
                         debug!("Error report sent successfully");
                     } else {
-                        debug!(
-                            "Error report failed with status: {}",
-                            response.status()
-                        );
+                        debug!("Error report failed with status: {}", response.status());
                     }
                 }
                 Err(e) => {
@@ -282,10 +277,7 @@ fn get_os_version() -> String {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        if let Ok(output) = Command::new("cmd")
-            .args(["/C", "ver"])
-            .output()
-        {
+        if let Ok(output) = Command::new("cmd").args(["/C", "ver"]).output() {
             if let Ok(version) = String::from_utf8(output.stdout) {
                 return version.trim().to_string();
             }

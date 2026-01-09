@@ -438,7 +438,10 @@ impl AuthService {
         // Check if we have a valid token
         let has_token = self.access_token.read().unwrap().is_some();
         let is_expired = self.is_token_expired();
-        debug!("get_access_token: has_token={}, is_expired={}", has_token, is_expired);
+        debug!(
+            "get_access_token: has_token={}, is_expired={}",
+            has_token, is_expired
+        );
 
         if !is_expired && has_token {
             return self.access_token.read().unwrap().clone();
@@ -469,15 +472,10 @@ impl AuthService {
     ) -> Result<AuthResponse, AuthError> {
         let url = format!("{}/api/auth/refresh", self.base_url);
 
-        let response = self
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|e| AuthError {
-                code: "NETWORK_ERROR".to_string(),
-                message: e.to_string(),
-            })?;
+        let response = self.client.post(&url).send().await.map_err(|e| AuthError {
+            code: "NETWORK_ERROR".to_string(),
+            message: e.to_string(),
+        })?;
 
         if !response.status().is_success() {
             let error = self.parse_error_response(response).await;
@@ -628,15 +626,10 @@ impl AuthService {
     pub async fn get_prices(&self) -> Result<Vec<Price>, AuthError> {
         let url = format!("{}/api/subscription/prices", self.base_url);
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| AuthError {
-                code: "NETWORK_ERROR".to_string(),
-                message: e.to_string(),
-            })?;
+        let response = self.client.get(&url).send().await.map_err(|e| AuthError {
+            code: "NETWORK_ERROR".to_string(),
+            message: e.to_string(),
+        })?;
 
         if !response.status().is_success() {
             return Err(self.parse_error_response(response).await);
@@ -651,7 +644,10 @@ impl AuthService {
     }
 
     /// Create Stripe checkout session
-    pub async fn create_checkout_session(&self, price_id: &str) -> Result<CheckoutSession, AuthError> {
+    pub async fn create_checkout_session(
+        &self,
+        price_id: &str,
+    ) -> Result<CheckoutSession, AuthError> {
         let url = format!("{}/api/subscription/checkout", self.base_url);
 
         let token = self.get_access_token().await.ok_or_else(|| AuthError {

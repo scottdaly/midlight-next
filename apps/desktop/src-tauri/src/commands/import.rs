@@ -197,9 +197,7 @@ pub async fn export_pdf<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
     // Use the print API
     // Note: Tauri 2 may have different print API, this is a placeholder
     // The actual implementation depends on Tauri's webview capabilities
-    window
-        .print()
-        .map_err(|e| format!("Print failed: {}", e))?;
+    window.print().map_err(|e| format!("Print failed: {}", e))?;
 
     Ok(true)
 }

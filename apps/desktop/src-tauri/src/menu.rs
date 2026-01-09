@@ -10,12 +10,13 @@ use tauri::{
 pub fn create_menu(app: &AppHandle<Wry>) -> Result<Menu<Wry>, tauri::Error> {
     // App menu (Midlight)
     let app_menu = SubmenuBuilder::new(app, "Midlight")
-        .item(&PredefinedMenuItem::about(app, Some("About Midlight"), None)?)
+        .item(&PredefinedMenuItem::about(
+            app,
+            Some("About Midlight"),
+            None,
+        )?)
         .separator()
-        .item(
-            &MenuItemBuilder::with_id("check_for_updates", "Check for Updates...")
-                .build(app)?,
-        )
+        .item(&MenuItemBuilder::with_id("check_for_updates", "Check for Updates...").build(app)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("settings", "Settings...")
@@ -52,14 +53,8 @@ pub fn create_menu(app: &AppHandle<Wry>) -> Result<Menu<Wry>, tauri::Error> {
                 .build(app)?,
         )
         .separator()
-        .item(
-            &MenuItemBuilder::with_id("export_docx", "Export as Word Document...")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("export_pdf", "Export as PDF...")
-                .build(app)?,
-        )
+        .item(&MenuItemBuilder::with_id("export_docx", "Export as Word Document...").build(app)?)
+        .item(&MenuItemBuilder::with_id("export_pdf", "Export as PDF...").build(app)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("close_tab", "Close Tab")
@@ -111,14 +106,8 @@ pub fn create_menu(app: &AppHandle<Wry>) -> Result<Menu<Wry>, tauri::Error> {
 
     // Help menu
     let help_menu = SubmenuBuilder::new(app, "Help")
-        .item(
-            &MenuItemBuilder::with_id("documentation", "Documentation")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("report_issue", "Report an Issue")
-                .build(app)?,
-        )
+        .item(&MenuItemBuilder::with_id("documentation", "Documentation").build(app)?)
+        .item(&MenuItemBuilder::with_id("report_issue", "Report an Issue").build(app)?)
         .build()?;
 
     // Build the complete menu bar

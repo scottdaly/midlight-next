@@ -274,11 +274,7 @@ impl FileWatcher {
 
             // Check if path should be ignored
             let path_str = relative.to_string_lossy();
-            if config
-                .ignored_patterns
-                .iter()
-                .any(|p| path_str.contains(p))
-            {
+            if config.ignored_patterns.iter().any(|p| path_str.contains(p)) {
                 continue;
             }
 

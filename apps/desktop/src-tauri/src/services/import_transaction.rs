@@ -360,7 +360,8 @@ mod tests {
         let mut tx = ImportTransaction::new(dest.clone()).unwrap();
 
         // Stage some files
-        tx.stage_file(Path::new("test.md"), b"# Hello World").unwrap();
+        tx.stage_file(Path::new("test.md"), b"# Hello World")
+            .unwrap();
         tx.stage_file(Path::new("folder/nested.md"), b"Nested content")
             .unwrap();
 
@@ -388,7 +389,8 @@ mod tests {
 
         let mut tx = ImportTransaction::new(dest.clone()).unwrap();
 
-        tx.stage_file(Path::new("test.md"), b"# Hello World").unwrap();
+        tx.stage_file(Path::new("test.md"), b"# Hello World")
+            .unwrap();
         let staging = tx.staging_dir().to_path_buf();
 
         // Verify staging exists
@@ -412,7 +414,8 @@ mod tests {
         let staging_path;
         {
             let mut tx = ImportTransaction::new(dest.clone()).unwrap();
-            tx.stage_file(Path::new("test.md"), b"# Hello World").unwrap();
+            tx.stage_file(Path::new("test.md"), b"# Hello World")
+                .unwrap();
             staging_path = tx.staging_dir().to_path_buf();
             assert!(staging_path.exists());
             // tx dropped here without commit
@@ -443,7 +446,8 @@ mod tests {
         let dest = temp.path().join("import_dest");
         let mut tx = ImportTransaction::new(dest.clone()).unwrap();
 
-        tx.stage_copy(&source_file, Path::new("copied.txt")).unwrap();
+        tx.stage_copy(&source_file, Path::new("copied.txt"))
+            .unwrap();
 
         let stats = tx.commit().unwrap();
         assert_eq!(stats.files_committed, 1);
@@ -461,7 +465,8 @@ mod tests {
         let dest = temp.path().join("import_dest");
         let mut tx = ImportTransaction::new(dest).unwrap();
 
-        tx.stage_copy(&source_file, Path::new("copied.txt")).unwrap();
+        tx.stage_copy(&source_file, Path::new("copied.txt"))
+            .unwrap();
 
         let staged_path = tx.staging_dir().join("copied.txt");
         assert!(tx.verify_copy(&source_file, &staged_path).unwrap());

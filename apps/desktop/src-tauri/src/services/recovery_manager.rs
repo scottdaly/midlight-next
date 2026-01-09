@@ -183,10 +183,7 @@ impl RecoveryManager {
                 continue;
             }
 
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.ends_with(".wal.json") {
                 continue;
             }
@@ -250,10 +247,7 @@ impl RecoveryManager {
         {
             let path = entry.path();
 
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.ends_with(".wal.json") || name.ends_with(".wal.tmp") {
                 if let Err(e) = fs::remove_file(&path).await {
                     warn!("Failed to remove recovery file {:?}: {}", path, e);
@@ -357,7 +351,10 @@ mod tests {
 
         // Write some WAL files
         manager.write_wal("file1.md", "content1").await.unwrap();
-        manager.write_wal("folder/file2.md", "content2").await.unwrap();
+        manager
+            .write_wal("folder/file2.md", "content2")
+            .await
+            .unwrap();
 
         // Check for recovery
         let recoverable = manager.check_for_recovery().await.unwrap();

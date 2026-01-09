@@ -41,10 +41,7 @@ pub async fn workspace_save_image(
 
 /// Get an image as a data URL
 #[tauri::command]
-pub async fn workspace_get_image(
-    workspace_root: String,
-    ref_id: String,
-) -> Result<String, String> {
+pub async fn workspace_get_image(workspace_root: String, ref_id: String) -> Result<String, String> {
     let manager = ImageManager::new(Path::new(&workspace_root));
     manager
         .get_image_data_url(&ref_id)
@@ -64,10 +61,7 @@ pub async fn workspace_image_exists(
 
 /// Delete an image
 #[tauri::command]
-pub async fn workspace_delete_image(
-    workspace_root: String,
-    ref_id: String,
-) -> Result<(), String> {
+pub async fn workspace_delete_image(workspace_root: String, ref_id: String) -> Result<(), String> {
     let manager = ImageManager::new(Path::new(&workspace_root));
     manager.delete(&ref_id).await.map_err(|e| e.to_string())
 }

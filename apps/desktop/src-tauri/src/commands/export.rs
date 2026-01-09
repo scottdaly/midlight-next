@@ -83,8 +83,7 @@ pub async fn export_to_docx<R: Runtime>(
                     .map_err(|e| format!("Failed to create directory: {}", e))?;
             }
 
-            std::fs::write(&path, &bytes)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
 
             Ok(ExportResult {
                 success: true,

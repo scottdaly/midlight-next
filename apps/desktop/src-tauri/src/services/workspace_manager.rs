@@ -97,9 +97,7 @@ impl WorkspaceManager {
                 .metadata()
                 .ok()
                 .and_then(|m| m.modified().ok())
-                .map(|t| {
-                    chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
-                })
+                .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
         } else {
             None
         };
@@ -110,7 +108,8 @@ impl WorkspaceManager {
             self.load_midlight_document(&full_path, has_recovery, recovery_time)
         } else if file_path.ends_with(".md") {
             // Legacy .md format - migrate to .midlight
-            self.load_and_migrate_markdown(&full_path, file_path, has_recovery, recovery_time).await
+            self.load_and_migrate_markdown(&full_path, file_path, has_recovery, recovery_time)
+                .await
         } else {
             // Unsupported format - try to read as plain text
             let content = if full_path.exists() {
@@ -172,12 +171,14 @@ impl WorkspaceManager {
             let now = chrono::Utc::now().to_rfc3339();
             serde_json::json!({ "created": now, "modified": now })
         });
-        let document = midlight_doc.get("document").cloned().unwrap_or_else(|| {
-            serde_json::json!({})
-        });
-        let images = midlight_doc.get("images").cloned().unwrap_or_else(|| {
-            serde_json::json!({})
-        });
+        let document = midlight_doc
+            .get("document")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let images = midlight_doc
+            .get("images")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let sidecar = serde_json::json!({
             "version": 1,
@@ -238,15 +239,17 @@ impl WorkspaceManager {
         let midlight_path = full_path.with_extension("midlight");
         let now = chrono::Utc::now().to_rfc3339();
 
-        let meta = sidecar.get("meta").cloned().unwrap_or_else(|| {
-            serde_json::json!({ "created": now, "modified": now })
-        });
-        let document = sidecar.get("document").cloned().unwrap_or_else(|| {
-            serde_json::json!({ "defaultFont": "Merriweather", "defaultFontSize": 16 })
-        });
-        let images = sidecar.get("images").cloned().unwrap_or_else(|| {
-            serde_json::json!({})
-        });
+        let meta = sidecar
+            .get("meta")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "created": now, "modified": now }));
+        let document = sidecar.get("document").cloned().unwrap_or_else(
+            || serde_json::json!({ "defaultFont": "Merriweather", "defaultFontSize": 16 }),
+        );
+        let images = sidecar
+            .get("images")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let midlight_doc = serde_json::json!({
             "version": 1,
@@ -302,16 +305,16 @@ impl WorkspaceManager {
 
         // Read existing document to preserve meta.created
         let (created, existing_images) = if full_path.exists() {
-            let existing = fs::read_to_string(&full_path).ok()
+            let existing = fs::read_to_string(&full_path)
+                .ok()
                 .and_then(|s| serde_json::from_str::<Value>(&s).ok());
-            let created = existing.as_ref()
+            let created = existing
+                .as_ref()
                 .and_then(|d| d.get("meta"))
                 .and_then(|m| m.get("created"))
                 .and_then(|c| c.as_str())
                 .map(|s| s.to_string());
-            let images = existing.as_ref()
-                .and_then(|d| d.get("images"))
-                .cloned();
+            let images = existing.as_ref().and_then(|d| d.get("images")).cloned();
             (created, images)
         } else {
             (None, None)
@@ -345,7 +348,14 @@ impl WorkspaceManager {
             .checkpoint_manager
             .write()
             .await
-            .create_checkpoint(&midlight_path, &content_for_checkpoint, sidecar_placeholder, trigger, None, None)
+            .create_checkpoint(
+                &midlight_path,
+                &content_for_checkpoint,
+                sidecar_placeholder,
+                trigger,
+                None,
+                None,
+            )
             .await?;
 
         // Clear recovery file
@@ -355,7 +365,11 @@ impl WorkspaceManager {
         ));
         let _ = fs::remove_file(recovery_path);
 
-        tracing::debug!("Saved document: {} (checkpoint: {})", midlight_path, &checkpoint.id[..8]);
+        tracing::debug!(
+            "Saved document: {} (checkpoint: {})",
+            midlight_path,
+            &checkpoint.id[..8]
+        );
 
         Ok(SaveResult {
             success: true,
@@ -423,16 +437,16 @@ impl WorkspaceManager {
 
         // Read existing document to preserve meta.created
         let (created, existing_images) = if full_path.exists() {
-            let existing = fs::read_to_string(&full_path).ok()
+            let existing = fs::read_to_string(&full_path)
+                .ok()
                 .and_then(|s| serde_json::from_str::<Value>(&s).ok());
-            let created = existing.as_ref()
+            let created = existing
+                .as_ref()
                 .and_then(|d| d.get("meta"))
                 .and_then(|m| m.get("created"))
                 .and_then(|c| c.as_str())
                 .map(|s| s.to_string());
-            let images = existing.as_ref()
-                .and_then(|d| d.get("images"))
-                .cloned();
+            let images = existing.as_ref().and_then(|d| d.get("images")).cloned();
             (created, images)
         } else {
             (None, None)
@@ -499,7 +513,8 @@ impl WorkspaceManager {
         Ok(DiffResult {
             additions,
             deletions,
-            change_count: (cp_b.stats.char_count as i32 - cp_a.stats.char_count as i32).unsigned_abs(),
+            change_count: (cp_b.stats.char_count as i32 - cp_a.stats.char_count as i32)
+                .unsigned_abs(),
         })
     }
 
@@ -684,7 +699,8 @@ impl WorkspaceManagerRegistry {
         }
 
         let manager = Arc::new(WorkspaceManager::new(Path::new(workspace_root)));
-        self.managers.insert(workspace_root.to_string(), manager.clone());
+        self.managers
+            .insert(workspace_root.to_string(), manager.clone());
 
         Ok(manager)
     }

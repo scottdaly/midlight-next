@@ -138,7 +138,10 @@ pub async fn llm_chat_stream(
     let stream_id = options.stream_id.clone();
     debug!(
         "llm_chat_stream: provider={}, model={}, stream_id={}, has_token={}",
-        options.base.provider, options.base.model, stream_id, auth_token.is_some()
+        options.base.provider,
+        options.base.model,
+        stream_id,
+        auth_token.is_some()
     );
 
     let request = ChatRequest {

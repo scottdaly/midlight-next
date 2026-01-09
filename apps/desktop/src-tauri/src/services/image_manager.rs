@@ -77,7 +77,11 @@ impl ImageManager {
         // Only write if doesn't exist (deduplication)
         if !file_path.exists() {
             fs::write(&file_path, &image_data)?;
-            tracing::debug!("Stored new image: {} ({} bytes)", filename, image_data.len());
+            tracing::debug!(
+                "Stored new image: {} ({} bytes)",
+                filename,
+                image_data.len()
+            );
         } else {
             tracing::debug!("Image already exists: {}", filename);
         }
@@ -89,9 +93,7 @@ impl ImageManager {
     /// Get an image as a data URL
     pub async fn get_image_data_url(&self, ref_id: &str) -> Result<String> {
         // Parse reference: "midlight://img-{hash}" or just the hash
-        let hash = ref_id
-            .strip_prefix("midlight://img-")
-            .unwrap_or(ref_id);
+        let hash = ref_id.strip_prefix("midlight://img-").unwrap_or(ref_id);
 
         // Find the image file (any extension)
         let matching_file = self.find_image_by_hash(hash)?;
@@ -120,17 +122,13 @@ impl ImageManager {
 
     /// Check if an image exists
     pub fn exists(&self, ref_id: &str) -> bool {
-        let hash = ref_id
-            .strip_prefix("midlight://img-")
-            .unwrap_or(ref_id);
+        let hash = ref_id.strip_prefix("midlight://img-").unwrap_or(ref_id);
         self.find_image_by_hash(hash).is_ok()
     }
 
     /// Delete an image
     pub async fn delete(&self, ref_id: &str) -> Result<()> {
-        let hash = ref_id
-            .strip_prefix("midlight://img-")
-            .unwrap_or(ref_id);
+        let hash = ref_id.strip_prefix("midlight://img-").unwrap_or(ref_id);
         let file_path = self.find_image_by_hash(hash)?;
         fs::remove_file(&file_path)?;
         tracing::debug!("Deleted image: {}", file_path.display());
@@ -159,7 +157,10 @@ impl ImageManager {
     /// Find image file by hash prefix
     fn find_image_by_hash(&self, hash: &str) -> Result<PathBuf> {
         if !self.images_dir.exists() {
-            return Err(MidlightError::NotFound(format!("Image not found: {}", hash)));
+            return Err(MidlightError::NotFound(format!(
+                "Image not found: {}",
+                hash
+            )));
         }
 
         for entry in fs::read_dir(&self.images_dir)? {
@@ -172,6 +173,9 @@ impl ImageManager {
             }
         }
 
-        Err(MidlightError::NotFound(format!("Image not found: {}", hash)))
+        Err(MidlightError::NotFound(format!(
+            "Image not found: {}",
+            hash
+        )))
     }
 }

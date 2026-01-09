@@ -57,8 +57,8 @@ pub struct CheckpointConfig {
 impl Default for CheckpointConfig {
     fn default() -> Self {
         Self {
-            min_interval_seconds: 300,  // 5 minutes
-            min_change_threshold: 50,   // 50 characters
+            min_interval_seconds: 300, // 5 minutes
+            min_change_threshold: 50,  // 50 characters
             max_checkpoints_per_file: 50,
             retention_days: 7,
         }
@@ -161,7 +161,9 @@ impl CheckpointManager {
         let mut history = self.histories.remove(&key).unwrap();
 
         // Check if we should create a checkpoint
-        if trigger != "bookmark" && !Self::should_create_checkpoint(&self.config, &history, markdown) {
+        if trigger != "bookmark"
+            && !Self::should_create_checkpoint(&self.config, &history, markdown)
+        {
             // Return the head checkpoint if exists
             if let Some(head_id) = &history.head_id {
                 if let Some(cp) = history.checkpoints.iter().find(|c| &c.id == head_id) {
@@ -231,7 +233,11 @@ impl CheckpointManager {
     }
 
     /// Check if we should create a new checkpoint based on config
-    fn should_create_checkpoint(config: &CheckpointConfig, history: &CheckpointHistory, markdown: &str) -> bool {
+    fn should_create_checkpoint(
+        config: &CheckpointConfig,
+        history: &CheckpointHistory,
+        markdown: &str,
+    ) -> bool {
         if history.checkpoints.is_empty() {
             return true;
         }
@@ -247,7 +253,8 @@ impl CheckpointManager {
                 }
 
                 // Check change size
-                let change_size = (markdown.len() as i32 - last.stats.char_count as i32).unsigned_abs();
+                let change_size =
+                    (markdown.len() as i32 - last.stats.char_count as i32).unsigned_abs();
                 if change_size < config.min_change_threshold {
                     return false;
                 }
@@ -295,7 +302,9 @@ impl CheckpointManager {
                 .collect();
 
             // Add newest auto checkpoints until we hit the limit
-            let slots_remaining = config.max_checkpoints_per_file.saturating_sub(to_keep.len());
+            let slots_remaining = config
+                .max_checkpoints_per_file
+                .saturating_sub(to_keep.len());
             to_keep.extend(auto_checkpoints.iter().rev().take(slots_remaining));
             to_keep.sort();
 
@@ -319,7 +328,11 @@ impl CheckpointManager {
     }
 
     /// Get a specific checkpoint
-    pub async fn get_checkpoint(&mut self, file_path: &str, checkpoint_id: &str) -> Result<Checkpoint> {
+    pub async fn get_checkpoint(
+        &mut self,
+        file_path: &str,
+        checkpoint_id: &str,
+    ) -> Result<Checkpoint> {
         let checkpoints = self.get_checkpoints(file_path).await?;
 
         checkpoints

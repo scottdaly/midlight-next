@@ -1,6 +1,8 @@
 // Auth Commands - Tauri IPC handlers for authentication
 
-use crate::services::auth_service::{CheckoutSession, PortalSession, Price, Quota, Subscription, User, AUTH_SERVICE};
+use crate::services::auth_service::{
+    CheckoutSession, PortalSession, Price, Quota, Subscription, User, AUTH_SERVICE,
+};
 use serde::Serialize;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -81,10 +83,13 @@ pub async fn auth_login_with_google(app: AppHandle) -> Result<(), String> {
         format!("Failed to start OAuth callback server: {}", e)
     })?;
 
-    let port = listener.local_addr().map_err(|e| {
-        error!("Failed to get local address: {}", e);
-        format!("Failed to get callback port: {}", e)
-    })?.port();
+    let port = listener
+        .local_addr()
+        .map_err(|e| {
+            error!("Failed to get local address: {}", e);
+            format!("Failed to get callback port: {}", e)
+        })?
+        .port();
 
     info!("OAuth callback server listening on port {}", port);
 
@@ -124,7 +129,8 @@ pub async fn auth_login_with_google(app: AppHandle) -> Result<(), String> {
                         path.split('?')
                             .nth(1) // Get query string
                             .and_then(|query| {
-                                query.split('&')
+                                query
+                                    .split('&')
                                     .find(|param| param.starts_with("code="))
                                     .map(|param| param.trim_start_matches("code=").to_string())
                             })
@@ -339,10 +345,7 @@ pub async fn auth_update_profile(
 pub async fn subscription_get_prices() -> Result<Vec<Price>, String> {
     debug!("subscription_get_prices command");
 
-    AUTH_SERVICE
-        .get_prices()
-        .await
-        .map_err(|e| e.to_string())
+    AUTH_SERVICE.get_prices().await.map_err(|e| e.to_string())
 }
 
 /// Create Stripe checkout session and open in browser

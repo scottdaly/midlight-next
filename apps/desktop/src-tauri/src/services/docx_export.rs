@@ -2,13 +2,12 @@
 // Converts Tiptap JSON documents to DOCX format using docx-rs
 
 use docx_rs::{
-    Docx, Paragraph, Run, AbstractNumbering, Level, LevelJc, LevelText,
-    NumberFormat, Numbering, Start, SpecialIndentType,
-    AlignmentType, RunFonts, NumberingId, IndentLevel,
+    AbstractNumbering, AlignmentType, Docx, IndentLevel, Level, LevelJc, LevelText, NumberFormat,
+    Numbering, NumberingId, Paragraph, Run, RunFonts, SpecialIndentType, Start,
 };
-use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Cursor;
 
 // ============================================================================
 // Types - Tiptap Document Structure
@@ -63,11 +62,7 @@ pub struct ExportProgress {
 /// This creates visual and numerical consistency: 12px in editor → 12pt in Word
 pub fn px_to_half_points(px: &str) -> usize {
     // Extract numeric value from string like "16px"
-    let numeric_value: f64 = px
-        .trim_end_matches("px")
-        .trim()
-        .parse()
-        .unwrap_or(14.0);
+    let numeric_value: f64 = px.trim_end_matches("px").trim().parse().unwrap_or(14.0);
 
     if numeric_value <= 0.0 {
         return 24; // Default to 12pt
@@ -130,7 +125,10 @@ pub fn extract_font_name(font_family: Option<&str>) -> &'static str {
 
     // Don't return generic font families
     let generic_families = ["serif", "sans-serif", "monospace", "cursive", "fantasy"];
-    if generic_families.iter().any(|&g| g.eq_ignore_ascii_case(first_font)) {
+    if generic_families
+        .iter()
+        .any(|&g| g.eq_ignore_ascii_case(first_font))
+    {
         return "Georgia";
     }
 
@@ -207,9 +205,18 @@ fn extract_text_style(marks: &[TiptapMark]) -> (Option<String>, Option<String>, 
     for mark in marks {
         if mark.mark_type == "textStyle" {
             if let Some(ref attrs) = mark.attrs {
-                let font_size = attrs.get("fontSize").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let font_family = attrs.get("fontFamily").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let color = attrs.get("color").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let font_size = attrs
+                    .get("fontSize")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let font_family = attrs
+                    .get("fontFamily")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let color = attrs
+                    .get("color")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 return (font_size, font_family, color);
             }
         }
@@ -218,7 +225,11 @@ fn extract_text_style(marks: &[TiptapMark]) -> (Option<String>, Option<String>, 
 }
 
 /// Creates a DOCX Run from a Tiptap text node
-fn create_text_run(node: &TiptapNode, default_size: Option<usize>, override_color: Option<&str>) -> Run {
+fn create_text_run(
+    node: &TiptapNode,
+    default_size: Option<usize>,
+    override_color: Option<&str>,
+) -> Run {
     let marks = &node.marks;
 
     // Extract boolean marks
@@ -232,7 +243,8 @@ fn create_text_run(node: &TiptapNode, default_size: Option<usize>, override_colo
     let (font_size_str, font_family_str, text_color_str) = extract_text_style(marks);
 
     // Extract highlight
-    let highlight_color = marks.iter()
+    let highlight_color = marks
+        .iter()
         .find(|m| m.mark_type == "highlight")
         .and_then(|m| m.attrs.as_ref())
         .and_then(|a| a.get("color"))
@@ -276,7 +288,13 @@ fn create_text_run(node: &TiptapNode, default_size: Option<usize>, override_colo
     }
 
     // Apply font
-    run = run.fonts(RunFonts::new().ascii(font_family).hi_ansi(font_family).east_asia(font_family).cs(font_family));
+    run = run.fonts(
+        RunFonts::new()
+            .ascii(font_family)
+            .hi_ansi(font_family)
+            .east_asia(font_family)
+            .cs(font_family),
+    );
 
     // Apply size
     run = run.size(font_size);
@@ -299,7 +317,11 @@ fn create_text_run(node: &TiptapNode, default_size: Option<usize>, override_colo
 }
 
 /// Processes ALL text nodes in a paragraph content array
-fn process_text_nodes(nodes: &[TiptapNode], default_size: Option<usize>, override_color: Option<&str>) -> Vec<Run> {
+fn process_text_nodes(
+    nodes: &[TiptapNode],
+    default_size: Option<usize>,
+    override_color: Option<&str>,
+) -> Vec<Run> {
     if nodes.is_empty() {
         return vec![Run::new().add_text("").size(default_size.unwrap_or(28))];
     }
@@ -317,7 +339,9 @@ fn process_text_nodes(nodes: &[TiptapNode], default_size: Option<usize>, overrid
 
 /// Creates a DOCX Paragraph from a Tiptap paragraph node
 fn create_paragraph(node: &TiptapNode) -> Paragraph {
-    let alignment = node.attrs.as_ref()
+    let alignment = node
+        .attrs
+        .as_ref()
         .and_then(|a| a.get("textAlign"))
         .and_then(|v| v.as_str())
         .map(|s| tiptap_align_to_docx(Some(s)))
@@ -337,7 +361,9 @@ fn create_paragraph(node: &TiptapNode) -> Paragraph {
 
 /// Creates a DOCX Paragraph with heading style from a Tiptap heading node
 fn create_heading(node: &TiptapNode) -> Paragraph {
-    let level = node.attrs.as_ref()
+    let level = node
+        .attrs
+        .as_ref()
         .and_then(|a| a.get("level"))
         .and_then(|v| v.as_u64())
         .unwrap_or(1) as u32;
@@ -351,7 +377,9 @@ fn create_heading(node: &TiptapNode) -> Paragraph {
         _ => 64,
     };
 
-    let alignment = node.attrs.as_ref()
+    let alignment = node
+        .attrs
+        .as_ref()
         .and_then(|a| a.get("textAlign"))
         .and_then(|v| v.as_str())
         .map(|s| tiptap_align_to_docx(Some(s)))
@@ -396,7 +424,9 @@ fn process_list_item(list_item: &TiptapNode, context: &ListContext) -> Vec<Parag
     for content in &list_item.content {
         match content.node_type.as_str() {
             "paragraph" => {
-                let alignment = content.attrs.as_ref()
+                let alignment = content
+                    .attrs
+                    .as_ref()
                     .and_then(|a| a.get("textAlign"))
                     .and_then(|v| v.as_str())
                     .map(|s| tiptap_align_to_docx(Some(s)))
@@ -420,11 +450,13 @@ fn process_list_item(list_item: &TiptapNode, context: &ListContext) -> Vec<Parag
                 paragraphs.push(para);
             }
             "bulletList" => {
-                let nested_paragraphs = process_bullet_list(content, context.level + 1, context.numbering_id);
+                let nested_paragraphs =
+                    process_bullet_list(content, context.level + 1, context.numbering_id);
                 paragraphs.extend(nested_paragraphs);
             }
             "orderedList" => {
-                let nested_paragraphs = process_ordered_list(content, context.level + 1, context.numbering_id);
+                let nested_paragraphs =
+                    process_ordered_list(content, context.level + 1, context.numbering_id);
                 paragraphs.extend(nested_paragraphs);
             }
             _ => {}
@@ -480,9 +512,18 @@ fn create_image_paragraph(node: &TiptapNode) -> Paragraph {
     };
 
     let _src = attrs.get("src").and_then(|v| v.as_str()).unwrap_or("");
-    let _width = attrs.get("width").and_then(|v| v.as_str()).unwrap_or("400px");
-    let _height = attrs.get("height").and_then(|v| v.as_str()).unwrap_or("auto");
-    let align = attrs.get("align").and_then(|v| v.as_str()).unwrap_or("center-break");
+    let _width = attrs
+        .get("width")
+        .and_then(|v| v.as_str())
+        .unwrap_or("400px");
+    let _height = attrs
+        .get("height")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
+    let align = attrs
+        .get("align")
+        .and_then(|v| v.as_str())
+        .unwrap_or("center-break");
 
     // Determine alignment
     let alignment = if align.starts_with("left") {
@@ -509,8 +550,7 @@ fn create_image_paragraph(node: &TiptapNode) -> Paragraph {
 fn create_horizontal_rule() -> Paragraph {
     // docx-rs doesn't have direct HR support, so we create a paragraph with bottom border
     // This is handled via styles in the main export function
-    Paragraph::new()
-        .add_run(Run::new().add_text(""))
+    Paragraph::new().add_run(Run::new().add_text(""))
 }
 
 // ============================================================================
@@ -521,28 +561,89 @@ fn create_horizontal_rule() -> Paragraph {
 fn create_bullet_numbering() -> AbstractNumbering {
     AbstractNumbering::new(1)
         .add_level(
-            Level::new(0, Start::new(1), NumberFormat::new("bullet"), LevelText::new("•"), LevelJc::new("left"))
-                .indent(Some(720), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                0,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("•"),
+                LevelJc::new("left"),
+            )
+            .indent(Some(720), Some(SpecialIndentType::Hanging(360)), None, None),
         )
         .add_level(
-            Level::new(1, Start::new(1), NumberFormat::new("bullet"), LevelText::new("○"), LevelJc::new("left"))
-                .indent(Some(1440), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                1,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("○"),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(1440),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(2, Start::new(1), NumberFormat::new("bullet"), LevelText::new("■"), LevelJc::new("left"))
-                .indent(Some(2160), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                2,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("■"),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(2160),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(3, Start::new(1), NumberFormat::new("bullet"), LevelText::new("•"), LevelJc::new("left"))
-                .indent(Some(2880), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                3,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("•"),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(2880),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(4, Start::new(1), NumberFormat::new("bullet"), LevelText::new("○"), LevelJc::new("left"))
-                .indent(Some(3600), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                4,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("○"),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(3600),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(5, Start::new(1), NumberFormat::new("bullet"), LevelText::new("■"), LevelJc::new("left"))
-                .indent(Some(4320), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                5,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("■"),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(4320),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
 }
 
@@ -550,28 +651,89 @@ fn create_bullet_numbering() -> AbstractNumbering {
 fn create_ordered_numbering() -> AbstractNumbering {
     AbstractNumbering::new(2)
         .add_level(
-            Level::new(0, Start::new(1), NumberFormat::new("decimal"), LevelText::new("%1."), LevelJc::new("left"))
-                .indent(Some(720), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                0,
+                Start::new(1),
+                NumberFormat::new("decimal"),
+                LevelText::new("%1."),
+                LevelJc::new("left"),
+            )
+            .indent(Some(720), Some(SpecialIndentType::Hanging(360)), None, None),
         )
         .add_level(
-            Level::new(1, Start::new(1), NumberFormat::new("lowerLetter"), LevelText::new("%2."), LevelJc::new("left"))
-                .indent(Some(1440), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                1,
+                Start::new(1),
+                NumberFormat::new("lowerLetter"),
+                LevelText::new("%2."),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(1440),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(2, Start::new(1), NumberFormat::new("lowerRoman"), LevelText::new("%3."), LevelJc::new("left"))
-                .indent(Some(2160), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                2,
+                Start::new(1),
+                NumberFormat::new("lowerRoman"),
+                LevelText::new("%3."),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(2160),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(3, Start::new(1), NumberFormat::new("decimal"), LevelText::new("%4."), LevelJc::new("left"))
-                .indent(Some(2880), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                3,
+                Start::new(1),
+                NumberFormat::new("decimal"),
+                LevelText::new("%4."),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(2880),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(4, Start::new(1), NumberFormat::new("lowerLetter"), LevelText::new("%5."), LevelJc::new("left"))
-                .indent(Some(3600), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                4,
+                Start::new(1),
+                NumberFormat::new("lowerLetter"),
+                LevelText::new("%5."),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(3600),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
         .add_level(
-            Level::new(5, Start::new(1), NumberFormat::new("lowerRoman"), LevelText::new("%6."), LevelJc::new("left"))
-                .indent(Some(4320), Some(SpecialIndentType::Hanging(360)), None, None)
+            Level::new(
+                5,
+                Start::new(1),
+                NumberFormat::new("lowerRoman"),
+                LevelText::new("%6."),
+                LevelJc::new("left"),
+            )
+            .indent(
+                Some(4320),
+                Some(SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
         )
 }
 
@@ -678,10 +840,22 @@ mod tests {
 
     #[test]
     fn test_normalize_color_to_hex() {
-        assert_eq!(normalize_color_to_hex(Some("#ff0000")), Some("FF0000".to_string()));
-        assert_eq!(normalize_color_to_hex(Some("#abc")), Some("AABBCC".to_string()));
-        assert_eq!(normalize_color_to_hex(Some("rgb(255, 0, 0)")), Some("FF0000".to_string()));
-        assert_eq!(normalize_color_to_hex(Some("rgba(0, 255, 0, 0.5)")), Some("00FF00".to_string()));
+        assert_eq!(
+            normalize_color_to_hex(Some("#ff0000")),
+            Some("FF0000".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("#abc")),
+            Some("AABBCC".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgb(255, 0, 0)")),
+            Some("FF0000".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgba(0, 255, 0, 0.5)")),
+            Some("00FF00".to_string())
+        );
         assert_eq!(normalize_color_to_hex(None), None);
         assert_eq!(normalize_color_to_hex(Some("")), None);
     }
@@ -690,17 +864,32 @@ mod tests {
     fn test_extract_font_name() {
         assert_eq!(extract_font_name(Some("Inter, sans-serif")), "Arial");
         assert_eq!(extract_font_name(Some("Merriweather, serif")), "Georgia");
-        assert_eq!(extract_font_name(Some("\"JetBrains Mono\", monospace")), "Courier New");
+        assert_eq!(
+            extract_font_name(Some("\"JetBrains Mono\", monospace")),
+            "Courier New"
+        );
         assert_eq!(extract_font_name(Some("sans-serif")), "Georgia");
         assert_eq!(extract_font_name(None), "Georgia");
     }
 
     #[test]
     fn test_tiptap_align_to_docx() {
-        assert!(matches!(tiptap_align_to_docx(Some("left")), AlignmentType::Left));
-        assert!(matches!(tiptap_align_to_docx(Some("center")), AlignmentType::Center));
-        assert!(matches!(tiptap_align_to_docx(Some("right")), AlignmentType::Right));
-        assert!(matches!(tiptap_align_to_docx(Some("justify")), AlignmentType::Justified));
+        assert!(matches!(
+            tiptap_align_to_docx(Some("left")),
+            AlignmentType::Left
+        ));
+        assert!(matches!(
+            tiptap_align_to_docx(Some("center")),
+            AlignmentType::Center
+        ));
+        assert!(matches!(
+            tiptap_align_to_docx(Some("right")),
+            AlignmentType::Right
+        ));
+        assert!(matches!(
+            tiptap_align_to_docx(Some("justify")),
+            AlignmentType::Justified
+        ));
         assert!(matches!(tiptap_align_to_docx(None), AlignmentType::Left));
     }
 }

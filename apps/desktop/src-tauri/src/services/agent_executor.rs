@@ -85,11 +85,7 @@ impl AgentExecutor {
     }
 
     /// Execute a tool by name with the given arguments
-    pub async fn execute_tool(
-        &self,
-        tool_name: &str,
-        arguments: Value,
-    ) -> ToolResult {
+    pub async fn execute_tool(&self, tool_name: &str, arguments: Value) -> ToolResult {
         info!("Executing tool: {} with args: {:?}", tool_name, arguments);
 
         match tool_name {
@@ -154,7 +150,11 @@ impl AgentExecutor {
                         files.push(FileInfo {
                             path: relative_path,
                             name: file_name,
-                            file_type: if is_dir { "directory".to_string() } else { "file".to_string() },
+                            file_type: if is_dir {
+                                "directory".to_string()
+                            } else {
+                                "file".to_string()
+                            },
                             modified,
                         });
                     }
@@ -208,9 +208,8 @@ impl AgentExecutor {
                     Ok(doc) => {
                         // Extract text content from Tiptap JSON
                         // Convert to markdown so AI sees formatting (headings, bold, etc.)
-                        let markdown_content = self.tiptap_to_markdown(
-                            doc.get("content").unwrap_or(&Value::Null)
-                        );
+                        let markdown_content =
+                            self.tiptap_to_markdown(doc.get("content").unwrap_or(&Value::Null));
                         let title = doc
                             .get("meta")
                             .and_then(|m| m.get("title"))
@@ -388,23 +387,29 @@ impl AgentExecutor {
         };
 
         // Extract original text for diff display
-        let original_text = self.extract_text_from_tiptap(
-            original_doc.get("content").unwrap_or(&Value::Null)
-        );
+        let original_text =
+            self.extract_text_from_tiptap(original_doc.get("content").unwrap_or(&Value::Null));
 
         // Create staged document with new content (don't modify original)
         let mut staged_doc = original_doc.clone();
         let tiptap_content = self.markdown_to_tiptap(new_content);
         staged_doc["content"] = tiptap_content;
-        staged_doc["meta"]["modified"] = json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        staged_doc["meta"]["modified"] =
+            json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
 
         // Generate change ID
         let change_id = Uuid::new_v4().to_string();
 
         // Extract just the Tiptap content portion (type: 'doc' with content array)
         // The full .midlight file has { content, document, meta, version } but Tiptap only needs the `content` field
-        let original_tiptap_content = original_doc.get("content").cloned().unwrap_or(json!({"type": "doc", "content": []}));
-        let staged_tiptap_content = staged_doc.get("content").cloned().unwrap_or(json!({"type": "doc", "content": []}));
+        let original_tiptap_content = original_doc
+            .get("content")
+            .cloned()
+            .unwrap_or(json!({"type": "doc", "content": []}));
+        let staged_tiptap_content = staged_doc
+            .get("content")
+            .cloned()
+            .unwrap_or(json!({"type": "doc", "content": []}));
 
         // Return staged content WITHOUT writing to disk
         // Frontend will display diff and write on accept
@@ -451,7 +456,10 @@ impl AgentExecutor {
         let old_file_path = self.workspace_root.join(old_path.trim_start_matches('/'));
         let new_file_path = self.workspace_root.join(new_path.trim_start_matches('/'));
 
-        debug!("Moving document: {:?} -> {:?}", old_file_path, new_file_path);
+        debug!(
+            "Moving document: {:?} -> {:?}",
+            old_file_path, new_file_path
+        );
 
         // Check if source exists
         if !old_file_path.exists() {
@@ -561,7 +569,10 @@ impl AgentExecutor {
         let mut matches: Vec<SearchMatch> = Vec::new();
 
         // Recursively search files
-        if let Err(e) = self.search_directory(&self.workspace_root, &query_lower, &mut matches).await {
+        if let Err(e) = self
+            .search_directory(&self.workspace_root, &query_lower, &mut matches)
+            .await
+        {
             warn!("Search error: {}", e);
         }
 
@@ -597,9 +608,8 @@ impl AgentExecutor {
                 // Search in file content
                 if let Ok(content) = fs::read_to_string(&path).await {
                     if let Ok(doc) = serde_json::from_str::<Value>(&content) {
-                        let text = self.extract_text_from_tiptap(
-                            doc.get("content").unwrap_or(&Value::Null)
-                        );
+                        let text = self
+                            .extract_text_from_tiptap(doc.get("content").unwrap_or(&Value::Null));
 
                         if text.to_lowercase().contains(query) {
                             let relative_path = path
@@ -660,9 +670,15 @@ impl AgentExecutor {
                         let mut formatted = t.to_string();
 
                         if let Some(marks) = marks {
-                            let has_bold = marks.iter().any(|m| m.get("type").and_then(|t| t.as_str()) == Some("bold"));
-                            let has_italic = marks.iter().any(|m| m.get("type").and_then(|t| t.as_str()) == Some("italic"));
-                            let has_code = marks.iter().any(|m| m.get("type").and_then(|t| t.as_str()) == Some("code"));
+                            let has_bold = marks
+                                .iter()
+                                .any(|m| m.get("type").and_then(|t| t.as_str()) == Some("bold"));
+                            let has_italic = marks
+                                .iter()
+                                .any(|m| m.get("type").and_then(|t| t.as_str()) == Some("italic"));
+                            let has_code = marks
+                                .iter()
+                                .any(|m| m.get("type").and_then(|t| t.as_str()) == Some("code"));
 
                             if has_code {
                                 formatted = format!("`{}`", formatted);
@@ -681,7 +697,8 @@ impl AgentExecutor {
                     }
                 }
                 "heading" => {
-                    let level = node.get("attrs")
+                    let level = node
+                        .get("attrs")
                         .and_then(|a| a.get("level"))
                         .and_then(|l| l.as_u64())
                         .unwrap_or(1) as usize;
@@ -710,9 +727,13 @@ impl AgentExecutor {
                         for child in content {
                             text.push_str("- ");
                             // Extract text from listItem -> paragraph -> text
-                            if let Some(item_content) = child.get("content").and_then(|c| c.as_array()) {
+                            if let Some(item_content) =
+                                child.get("content").and_then(|c| c.as_array())
+                            {
                                 for para in item_content {
-                                    if let Some(para_content) = para.get("content").and_then(|c| c.as_array()) {
+                                    if let Some(para_content) =
+                                        para.get("content").and_then(|c| c.as_array())
+                                    {
                                         for text_node in para_content {
                                             text.push_str(&self.tiptap_to_markdown(text_node));
                                         }
@@ -728,9 +749,13 @@ impl AgentExecutor {
                         for (idx, child) in content.iter().enumerate() {
                             text.push_str(&format!("{}. ", idx + 1));
                             // Extract text from listItem -> paragraph -> text
-                            if let Some(item_content) = child.get("content").and_then(|c| c.as_array()) {
+                            if let Some(item_content) =
+                                child.get("content").and_then(|c| c.as_array())
+                            {
                                 for para in item_content {
-                                    if let Some(para_content) = para.get("content").and_then(|c| c.as_array()) {
+                                    if let Some(para_content) =
+                                        para.get("content").and_then(|c| c.as_array())
+                                    {
                                         for text_node in para_content {
                                             text.push_str(&self.tiptap_to_markdown(text_node));
                                         }
@@ -745,7 +770,9 @@ impl AgentExecutor {
                     if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                         for child in content {
                             text.push_str("> ");
-                            if let Some(para_content) = child.get("content").and_then(|c| c.as_array()) {
+                            if let Some(para_content) =
+                                child.get("content").and_then(|c| c.as_array())
+                            {
                                 for text_node in para_content {
                                     text.push_str(&self.tiptap_to_markdown(text_node));
                                 }
@@ -898,7 +925,8 @@ impl AgentExecutor {
             // Unordered list item
             else if line.starts_with("- ") || line.starts_with("* ") {
                 let mut list_items: Vec<Value> = Vec::new();
-                while i < lines.len() && (lines[i].starts_with("- ") || lines[i].starts_with("* ")) {
+                while i < lines.len() && (lines[i].starts_with("- ") || lines[i].starts_with("* "))
+                {
                     let item_text = &lines[i][2..];
                     list_items.push(json!({
                         "type": "listItem",
@@ -916,8 +944,13 @@ impl AgentExecutor {
                 continue; // Skip the i += 1 at the end
             }
             // Ordered list item
-            else if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
-                && line.contains(". ") {
+            else if line
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+                && line.contains(". ")
+            {
                 let mut list_items: Vec<Value> = Vec::new();
                 while i < lines.len() {
                     let current = lines[i];
@@ -1009,9 +1042,10 @@ impl AgentExecutor {
             }
 
             // Check for bold+italic (*** or ___)
-            if i + 2 < chars.len() &&
-               ((chars[i] == '*' && chars[i+1] == '*' && chars[i+2] == '*') ||
-                (chars[i] == '_' && chars[i+1] == '_' && chars[i+2] == '_')) {
+            if i + 2 < chars.len()
+                && ((chars[i] == '*' && chars[i + 1] == '*' && chars[i + 2] == '*')
+                    || (chars[i] == '_' && chars[i + 1] == '_' && chars[i + 2] == '_'))
+            {
                 let marker = chars[i];
                 // Flush current text
                 if !current_text.is_empty() {
@@ -1022,8 +1056,9 @@ impl AgentExecutor {
                 // Find closing markers
                 let start = i + 3;
                 i += 3;
-                while i + 2 < chars.len() &&
-                      !(chars[i] == marker && chars[i+1] == marker && chars[i+2] == marker) {
+                while i + 2 < chars.len()
+                    && !(chars[i] == marker && chars[i + 1] == marker && chars[i + 2] == marker)
+                {
                     i += 1;
                 }
                 if i + 2 < chars.len() {
@@ -1039,9 +1074,10 @@ impl AgentExecutor {
             }
 
             // Check for bold (** or __)
-            if i + 1 < chars.len() &&
-               ((chars[i] == '*' && chars[i+1] == '*') ||
-                (chars[i] == '_' && chars[i+1] == '_')) {
+            if i + 1 < chars.len()
+                && ((chars[i] == '*' && chars[i + 1] == '*')
+                    || (chars[i] == '_' && chars[i + 1] == '_'))
+            {
                 let marker = chars[i];
                 // Flush current text
                 if !current_text.is_empty() {
@@ -1052,7 +1088,7 @@ impl AgentExecutor {
                 // Find closing markers
                 let start = i + 2;
                 i += 2;
-                while i + 1 < chars.len() && !(chars[i] == marker && chars[i+1] == marker) {
+                while i + 1 < chars.len() && !(chars[i] == marker && chars[i + 1] == marker) {
                     i += 1;
                 }
                 if i + 1 < chars.len() {
@@ -1068,10 +1104,14 @@ impl AgentExecutor {
             }
 
             // Check for italic (* or _) - but not at word boundaries for _
-            if (chars[i] == '*') ||
-               (chars[i] == '_' && (i == 0 || !chars[i-1].is_alphanumeric())) {
+            if (chars[i] == '*') || (chars[i] == '_' && (i == 0 || !chars[i - 1].is_alphanumeric()))
+            {
                 let marker = chars[i];
-                let next_char = if i + 1 < chars.len() { Some(chars[i + 1]) } else { None };
+                let next_char = if i + 1 < chars.len() {
+                    Some(chars[i + 1])
+                } else {
+                    None
+                };
 
                 // Make sure it's not ** or __ (bold)
                 if next_char != Some(marker) {

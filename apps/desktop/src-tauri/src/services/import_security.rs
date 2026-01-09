@@ -65,7 +65,9 @@ impl AllowedExtension {
     /// Check if a filename has this extension type
     pub fn matches(&self, filename: &str) -> bool {
         let lower = filename.to_lowercase();
-        self.extensions().iter().any(|ext| lower.ends_with(&format!(".{}", ext)))
+        self.extensions()
+            .iter()
+            .any(|ext| lower.ends_with(&format!(".{}", ext)))
     }
 
     /// Determine the extension type from a filename
@@ -102,7 +104,9 @@ const INVALID_FILENAME_CHARS: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?
 /// - Enforces max length (255 chars)
 pub fn sanitize_filename(filename: &str) -> Result<String, ImportError> {
     if filename.is_empty() {
-        return Err(ImportError::InvalidFilename("Filename cannot be empty".into()));
+        return Err(ImportError::InvalidFilename(
+            "Filename cannot be empty".into(),
+        ));
     }
 
     // Normalize Unicode to NFC
@@ -193,7 +197,9 @@ pub fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, ImportErro
 
     // Check path length
     if relative_path.len() > ImportConfig::MAX_PATH_LENGTH {
-        return Err(ImportError::InvalidPath("Path exceeds maximum length".into()));
+        return Err(ImportError::InvalidPath(
+            "Path exceeds maximum length".into(),
+        ));
     }
 
     // Decode URL encoding to prevent %2e%2e/../ bypass
@@ -207,9 +213,7 @@ pub fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, ImportErro
 
     // Check for null bytes
     if normalized.contains('\0') {
-        return Err(ImportError::InvalidPath(
-            "Path contains null bytes".into(),
-        ));
+        return Err(ImportError::InvalidPath("Path contains null bytes".into()));
     }
 
     // Reject absolute paths
@@ -313,18 +317,21 @@ pub fn validate_path(input_path: &str) -> Result<(), ImportError> {
 
     // Check for null bytes
     if input_path.contains('\0') {
-        return Err(ImportError::InvalidPath(
-            "Path contains null bytes".into(),
-        ));
+        return Err(ImportError::InvalidPath("Path contains null bytes".into()));
     }
 
     // Check length
     if input_path.len() > ImportConfig::MAX_PATH_LENGTH {
-        return Err(ImportError::InvalidPath("Path exceeds maximum length".into()));
+        return Err(ImportError::InvalidPath(
+            "Path exceeds maximum length".into(),
+        ));
     }
 
     // Check for control characters
-    if input_path.chars().any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r') {
+    if input_path
+        .chars()
+        .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r')
+    {
         return Err(ImportError::InvalidPath(
             "Path contains invalid control characters".into(),
         ));
@@ -433,9 +440,7 @@ pub fn safe_parse_front_matter(content: &str) -> Result<Option<FrontMatter>, Imp
 #[allow(dead_code)] // Security check preserved for future use
 pub fn is_external_url(url: &str) -> bool {
     let lower = url.to_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
 }
 
 /// Check if a URL uses a dangerous scheme
@@ -498,12 +503,18 @@ mod tests {
     #[test]
     fn test_sanitize_filename_basic() {
         assert_eq!(sanitize_filename("hello.md").unwrap(), "hello.md");
-        assert_eq!(sanitize_filename("Hello World.md").unwrap(), "Hello World.md");
+        assert_eq!(
+            sanitize_filename("Hello World.md").unwrap(),
+            "Hello World.md"
+        );
     }
 
     #[test]
     fn test_sanitize_filename_invalid_chars() {
-        assert_eq!(sanitize_filename("hello<world>.md").unwrap(), "hello_world_.md");
+        assert_eq!(
+            sanitize_filename("hello<world>.md").unwrap(),
+            "hello_world_.md"
+        );
         assert_eq!(sanitize_filename("test:file.md").unwrap(), "test_file.md");
     }
 

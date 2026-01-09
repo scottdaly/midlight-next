@@ -221,8 +221,7 @@ pub fn detect_source_type(folder_path: &Path) -> Result<ImportSourceType, Import
 
     // Check for UUID-suffixed files (Notion export)
     // Notion exports have filenames like "Page Title abc123def456.md"
-    let uuid_pattern =
-        Regex::new(r" [0-9a-f]{32}\.").expect("Invalid UUID regex");
+    let uuid_pattern = Regex::new(r" [0-9a-f]{32}\.").expect("Invalid UUID regex");
 
     for entry in WalkDir::new(folder_path).max_depth(2) {
         if let Ok(entry) = entry {
@@ -383,11 +382,7 @@ pub fn analyze_obsidian_vault(vault_path: &Path) -> Result<ImportAnalysis, Impor
                             }
 
                             // Check for front matter
-                            if safe_parse_front_matter(&content)
-                                .ok()
-                                .flatten()
-                                .is_some()
-                            {
+                            if safe_parse_front_matter(&content).ok().flatten().is_some() {
                                 analysis.front_matter += 1;
                                 file_info.has_front_matter = true;
                             }
@@ -442,8 +437,7 @@ pub fn analyze_notion_export(export_path: &Path) -> Result<ImportAnalysis, Impor
         )));
     }
 
-    let _uuid_pattern =
-        Regex::new(r" [0-9a-f]{32}(\.|\/)").expect("Invalid UUID regex");
+    let _uuid_pattern = Regex::new(r" [0-9a-f]{32}(\.|\/)").expect("Invalid UUID regex");
 
     let mut analysis = ImportAnalysis {
         source_type: ImportSourceType::Notion,
@@ -636,10 +630,7 @@ pub fn convert_wiki_links(
     for (start, end, link_target, display_text) in matches.into_iter().rev() {
         // Parse link target (might have heading anchor)
         let (file_part, anchor) = if let Some(hash_pos) = link_target.find('#') {
-            (
-                &link_target[..hash_pos],
-                Some(&link_target[hash_pos..]),
-            )
+            (&link_target[..hash_pos], Some(&link_target[hash_pos..]))
         } else {
             (link_target.as_str(), None)
         };
@@ -720,8 +711,7 @@ pub fn remove_dataview(content: &str) -> String {
 
 /// Strip Notion UUID from filename
 pub fn strip_notion_uuid(filename: &str) -> String {
-    let uuid_pattern =
-        Regex::new(r" [0-9a-f]{32}(\.[^.]+)$").expect("Invalid UUID regex");
+    let uuid_pattern = Regex::new(r" [0-9a-f]{32}(\.[^.]+)$").expect("Invalid UUID regex");
 
     if let Some(caps) = uuid_pattern.captures(filename) {
         let ext = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -958,10 +948,9 @@ pub fn import_obsidian_vault(
                 }
 
                 // Copy attachment
-                if let Err(e) = transaction.stage_copy(
-                    Path::new(&file_info.source_path),
-                    &dest_relative_path,
-                ) {
+                if let Err(e) =
+                    transaction.stage_copy(Path::new(&file_info.source_path), &dest_relative_path)
+                {
                     errors.push(ImportErrorInfo {
                         file: file_info.relative_path.clone(),
                         message: e.to_string(),
@@ -1169,10 +1158,9 @@ pub fn import_notion_export(
                     continue;
                 }
 
-                if let Err(e) = transaction.stage_copy(
-                    Path::new(&file_info.source_path),
-                    &dest_relative_path,
-                ) {
+                if let Err(e) =
+                    transaction.stage_copy(Path::new(&file_info.source_path), &dest_relative_path)
+                {
                     errors.push(ImportErrorInfo {
                         file: file_info.relative_path.clone(),
                         message: e.to_string(),
@@ -1184,8 +1172,7 @@ pub fn import_notion_export(
             }
             ImportFileType::Other => {
                 // Handle CSV files
-                if options.convert_csv_to_tables
-                    && file_info.name.to_lowercase().ends_with(".csv")
+                if options.convert_csv_to_tables && file_info.name.to_lowercase().ends_with(".csv")
                 {
                     let content = match fs::read_to_string(&file_info.source_path) {
                         Ok(c) => c,
@@ -1217,8 +1204,7 @@ pub fn import_notion_export(
                             };
 
                             if let Ok(safe_path) = sanitize_relative_path(&md_path) {
-                                if let Err(e) =
-                                    transaction.stage_file(&safe_path, table.as_bytes())
+                                if let Err(e) = transaction.stage_file(&safe_path, table.as_bytes())
                                 {
                                     errors.push(ImportErrorInfo {
                                         file: file_info.relative_path.clone(),

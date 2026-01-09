@@ -456,10 +456,7 @@ impl LLMService {
     }
 
     /// Handle a successful response
-    async fn handle_response(
-        &self,
-        response: reqwest::Response,
-    ) -> Result<ChatResponse, LLMError> {
+    async fn handle_response(&self, response: reqwest::Response) -> Result<ChatResponse, LLMError> {
         if !response.status().is_success() {
             return Err(self.parse_error_response(response).await);
         }

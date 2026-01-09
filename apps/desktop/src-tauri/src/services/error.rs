@@ -88,9 +88,7 @@ pub enum ImportError {
 impl From<std::io::Error> for ImportError {
     fn from(err: std::io::Error) -> Self {
         match err.kind() {
-            std::io::ErrorKind::PermissionDenied => {
-                ImportError::PermissionDenied(err.to_string())
-            }
+            std::io::ErrorKind::PermissionDenied => ImportError::PermissionDenied(err.to_string()),
             std::io::ErrorKind::NotFound => ImportError::FileNotFound(err.to_string()),
             _ => ImportError::Io(err.to_string()),
         }

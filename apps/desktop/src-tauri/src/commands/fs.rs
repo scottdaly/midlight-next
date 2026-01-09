@@ -1,11 +1,11 @@
 // File system commands
 
 use chrono;
+use dirs;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::Path;
-use dirs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileNode {
@@ -65,7 +65,8 @@ pub async fn get_default_workspace() -> Result<String, String> {
 
     // Create the directory if it doesn't exist
     if !workspace_path.exists() {
-        fs::create_dir_all(&workspace_path).map_err(|e| format!("Failed to create workspace: {}", e))?;
+        fs::create_dir_all(&workspace_path)
+            .map_err(|e| format!("Failed to create workspace: {}", e))?;
     }
 
     // Initialize workspace if .midlight folder doesn't exist
@@ -179,10 +180,7 @@ pub async fn create_folder(path: String) -> Result<(), String> {
 
 /// Create a new .midlight file with initial empty content
 #[tauri::command]
-pub async fn create_midlight_file(
-    parent_path: String,
-    name: String,
-) -> Result<FileNode, String> {
+pub async fn create_midlight_file(parent_path: String, name: String) -> Result<FileNode, String> {
     // Ensure name has .midlight extension
     let file_name = if name.ends_with(".midlight") {
         name
@@ -229,10 +227,7 @@ pub async fn create_midlight_file(
 
 /// Create a new folder and return its FileNode
 #[tauri::command]
-pub async fn create_new_folder(
-    parent_path: String,
-    name: String,
-) -> Result<FileNode, String> {
+pub async fn create_new_folder(parent_path: String, name: String) -> Result<FileNode, String> {
     let folder_path = Path::new(&parent_path).join(&name);
 
     // Check if folder already exists
@@ -240,8 +235,7 @@ pub async fn create_new_folder(
         return Err(format!("Folder already exists: {}", folder_path.display()));
     }
 
-    fs::create_dir_all(&folder_path)
-        .map_err(|e| format!("Failed to create folder: {}", e))?;
+    fs::create_dir_all(&folder_path).map_err(|e| format!("Failed to create folder: {}", e))?;
 
     Ok(FileNode {
         id: generate_id(),
@@ -274,11 +268,13 @@ pub async fn file_duplicate(path: String) -> Result<DuplicateResult, String> {
         return Err(format!("Path does not exist: {}", path));
     }
 
-    let file_name = src.file_name()
+    let file_name = src
+        .file_name()
         .ok_or_else(|| "Invalid path".to_string())?
         .to_string_lossy();
 
-    let parent = src.parent()
+    let parent = src
+        .parent()
         .ok_or_else(|| "Cannot get parent directory".to_string())?;
 
     // For files: "document.md" -> "document-Copy.md", "document-Copy 2.md", etc.
@@ -286,10 +282,12 @@ pub async fn file_duplicate(path: String) -> Result<DuplicateResult, String> {
     let (stem, ext) = if src.is_dir() {
         (file_name.to_string(), String::new())
     } else {
-        let stem = src.file_stem()
+        let stem = src
+            .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| file_name.to_string());
-        let ext = src.extension()
+        let ext = src
+            .extension()
             .map(|e| format!(".{}", e.to_string_lossy()))
             .unwrap_or_default();
         (stem, ext)
@@ -399,7 +397,10 @@ pub async fn file_copy_to(
     let dest = Path::new(&dest_dir);
 
     if !dest.exists() {
-        return Err(format!("Destination directory does not exist: {}", dest_dir));
+        return Err(format!(
+            "Destination directory does not exist: {}",
+            dest_dir
+        ));
     }
 
     if !dest.is_dir() {
@@ -462,7 +463,10 @@ pub async fn file_move_to(
     let dest = Path::new(&dest_dir);
 
     if !dest.exists() {
-        return Err(format!("Destination directory does not exist: {}", dest_dir));
+        return Err(format!(
+            "Destination directory does not exist: {}",
+            dest_dir
+        ));
     }
 
     if !dest.is_dir() {
@@ -525,11 +529,10 @@ pub async fn file_move_to(
                     let sidecar = format!("{}.sidecar.json", src_path);
                     if Path::new(&sidecar).exists() {
                         let dest_sidecar = format!("{}.sidecar.json", final_dest.display());
-                        let _ = fs::rename(&sidecar, &dest_sidecar)
-                            .or_else(|_| {
-                                fs::copy(&sidecar, &dest_sidecar)?;
-                                fs::remove_file(&sidecar)
-                            });
+                        let _ = fs::rename(&sidecar, &dest_sidecar).or_else(|_| {
+                            fs::copy(&sidecar, &dest_sidecar)?;
+                            fs::remove_file(&sidecar)
+                        });
                     }
                 }
                 Ok(())
@@ -572,10 +575,12 @@ fn generate_unique_path(base: &Path) -> std::path::PathBuf {
     }
 
     let parent = base.parent().unwrap_or(Path::new("."));
-    let stem = base.file_stem()
+    let stem = base
+        .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let ext = base.extension()
+    let ext = base
+        .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
 
