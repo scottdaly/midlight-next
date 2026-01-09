@@ -125,56 +125,19 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Sign Windows MSI with Trusted Signing
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-        run: |
-          $msiFile = Get-ChildItem -Path "apps/desktop/src-tauri/target/release/bundle/msi/*.msi" | Select-Object -First 1
-          if ($msiFile) {
-            # Download and extract Azure.CodeSigning.Dlib NuGet package
-            $nugetUrl = "https://www.nuget.org/api/v2/package/Azure.CodeSigning.Dlib/1.0.52"
-            $nugetPath = "$env:RUNNER_TEMP\codesigning.nupkg"
-            $extractPath = "$env:RUNNER_TEMP\codesigning"
-
-            Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetPath
-            Expand-Archive -Path $nugetPath -DestinationPath $extractPath -Force
-
-            $dlibPath = Join-Path $extractPath "bin\x64\Azure.CodeSigning.Dlib.dll"
-
-            # Create metadata.json
-            $metadata = @{
-              Endpoint = "${{ secrets.AZURE_ENDPOINT }}"
-              CodeSigningAccountName = "${{ secrets.AZURE_SIGNING_ACCOUNT }}"
-              CertificateProfileName = "${{ secrets.AZURE_CERT_PROFILE_NAME }}"
-            } | ConvertTo-Json
-            $metadataPath = "$env:RUNNER_TEMP\metadata.json"
-            $metadata | Out-File -FilePath $metadataPath -Encoding utf8
-
-            # Find signtool
-            $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -Recurse | Select-Object -First 1
-
-            Write-Host "Using signtool: $($signtool.FullName)"
-            Write-Host "Using dlib: $dlibPath"
-            Write-Host "Signing: $($msiFile.FullName)"
-
-            # Sign with Trusted Signing
-            & $signtool.FullName sign /v /debug `
-              /fd SHA256 `
-              /tr "http://timestamp.acs.microsoft.com" `
-              /td SHA256 `
-              /dlib $dlibPath `
-              /dmdf $metadataPath `
-              $msiFile.FullName
-
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "Signing failed with exit code $LASTEXITCODE"
-              exit 1
-            }
-          } else {
-            Write-Host "No MSI file found to sign"
-          }
-        shell: pwsh
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+          files-folder: apps/desktop/src-tauri/target/release/bundle/msi
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
