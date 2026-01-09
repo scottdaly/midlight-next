@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth, recoveryStore, clearAllWalWrites, toastStore, fileWatcherStore, shortcuts } from '@midlight/stores';
@@ -13,6 +14,8 @@
   import { recoveryClient } from '$lib/recovery';
   import { fileWatcherClient } from '$lib/fileWatcher';
   import { errorReporter } from '$lib/errorReporter';
+  import { updatesClient } from '$lib/updates';
+  import { windowStateClient } from '$lib/windowState';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TabBar from '$lib/components/TabBar.svelte';
   import Toolbar from '$lib/components/Toolbar.svelte';
@@ -25,6 +28,7 @@
   import RecoveryDialog from '$lib/components/RecoveryDialog.svelte';
   import ExternalChangeDialog from '$lib/components/ExternalChangeDialog.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
+  import UpdateDialog from '$lib/components/UpdateDialog.svelte';
 
   let initialized = $state(false);
   let sidebarWidth = $state(240);
@@ -33,6 +37,7 @@
   let showUpgradeModal = $state(false);
   let fileWatcherUnlisten: (() => void) | null = null;
   let currentWatchedWorkspace: string | null = null;
+  let menuUnlisteners: UnlistenFn[] = [];
 
   const ALL_THEMES = ['light', 'dark', 'midnight', 'sepia', 'forest', 'cyberpunk', 'coffee'];
   const DARK_THEMES = ['dark', 'midnight', 'forest', 'cyberpunk'];
@@ -97,6 +102,9 @@
     // Initialize auth and workspace
     (async () => {
       try {
+        // Initialize window state persistence (restore window position/size)
+        await windowStateClient.init();
+
         // Initialize error reporting from settings
         const settingsState = get(settings);
         await errorReporter.setEnabled(settingsState.errorReportingEnabled);
@@ -116,6 +124,9 @@
 
         // Start file watcher for external changes
         await startFileWatcher(defaultWorkspace);
+
+        // Initialize auto-updates (checks for updates after 10s delay)
+        await updatesClient.init();
       } catch (error) {
         console.error('Failed to initialize:', error);
         // Report initialization error (if reporting is enabled)
@@ -124,9 +135,8 @@
       initialized = true;
     })();
 
-    // Listen for menu actions
-    const handleMenuAction = () => openFolder();
-    window.addEventListener('midlight:open-workspace', handleMenuAction);
+    // Listen for native macOS menu events (emitted from Rust)
+    setupMenuListeners();
 
     // Refresh subscription data when window regains focus
     // This catches post-checkout updates when user returns from Stripe
@@ -145,7 +155,6 @@
     return () => {
       unsubscribe();
       stopAuthEventListeners();
-      window.removeEventListener('midlight:open-workspace', handleMenuAction);
       window.removeEventListener('focus', handleWindowFocus);
     };
   });
@@ -156,6 +165,13 @@
     clearAllWalWrites();
     // Stop file watcher
     stopFileWatcher();
+    // Clean up updates client
+    updatesClient.destroy();
+    // Clean up window state client
+    windowStateClient.destroy();
+    // Clean up menu listeners
+    menuUnlisteners.forEach((unlisten) => unlisten());
+    menuUnlisteners = [];
   });
 
   // Check for recovery files and prompt user
@@ -272,6 +288,79 @@
       console.error('Failed to apply recovered content:', error);
       toastStore.error('Failed to recover document');
     }
+  }
+
+  // Set up listeners for native macOS menu events
+  async function setupMenuListeners() {
+    // Only set up on macOS - Windows uses custom menu component
+    if (!navigator.userAgent.includes('Mac')) return;
+
+    const listeners = await Promise.all([
+      // App menu
+      listen('menu:settings', () => settings.open()),
+      listen('menu:check-for-updates', () => updatesClient.checkForUpdates(true)),
+
+      // File menu
+      listen('menu:new-document', async () => {
+        const fs = get(fileSystem);
+        if (fs.rootDir) {
+          try {
+            await fileSystem.createFile(fs.rootDir, 'Untitled');
+          } catch (error) {
+            console.error('Failed to create document:', error);
+          }
+        }
+      }),
+      listen('menu:open-workspace', () => openFolder()),
+      listen('menu:save', async () => {
+        const file = get(activeFile);
+        if (file) {
+          await fileSystem.save('manual');
+          toastStore.success('Document saved');
+        }
+      }),
+      listen('menu:export-docx', async () => {
+        const file = get(activeFile);
+        if (file) {
+          // Trigger export - implementation depends on existing export flow
+          window.dispatchEvent(new CustomEvent('midlight:export-docx'));
+        }
+      }),
+      listen('menu:export-pdf', async () => {
+        const file = get(activeFile);
+        if (file) {
+          window.dispatchEvent(new CustomEvent('midlight:export-pdf'));
+        }
+      }),
+      listen('menu:close-tab', () => {
+        const file = get(activeFile);
+        if (file) {
+          fileSystem.closeFile(file.path);
+        }
+      }),
+
+      // Edit menu (find)
+      listen('menu:find', () => {
+        // Trigger find in editor - emit event for editor component
+        window.dispatchEvent(new CustomEvent('midlight:find'));
+      }),
+
+      // View menu
+      listen('menu:toggle-ai-panel', () => ui.togglePanelMode('chat')),
+      listen('menu:toggle-versions-panel', () => ui.togglePanelMode('versions')),
+
+      // Help menu
+      listen('menu:documentation', async () => {
+        const { openExternal } = await import('$lib/system');
+        await openExternal('https://midlight.ai/docs');
+      }),
+      listen('menu:report-issue', async () => {
+        const { openExternal } = await import('$lib/system');
+        await openExternal('https://midlight.ai/support');
+      }),
+    ]);
+
+    menuUnlisteners = listeners;
   }
 
   async function openFolder() {
@@ -489,3 +578,6 @@
 
 <!-- Toast Notifications -->
 <ToastContainer />
+
+<!-- Update Dialog -->
+<UpdateDialog />

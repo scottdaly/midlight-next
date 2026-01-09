@@ -41,13 +41,24 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.mac.plist"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
-      "endpoints": []
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI4NTAzMjE1NjRGQkU1RkYKUldULzVmdGtGVEpRdU5veElrd3hPanNrSUM5dUlrekN4dy9Nb3FNK2d2aUpxSHVYTmt3OGVhN0MK",
+      "endpoints": [
+        "https://midlight.ai/releases/tauri-latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

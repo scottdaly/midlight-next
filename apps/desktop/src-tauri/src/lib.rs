@@ -1,6 +1,8 @@
 // Midlight Desktop App - Tauri Backend
 
 mod commands;
+#[cfg(target_os = "macos")]
+mod menu;
 mod services;
 
 use std::sync::Arc;
@@ -150,6 +152,15 @@ pub fn run() {
             commands::error_reporter::error_reporter_set_enabled,
             commands::error_reporter::error_reporter_get_status,
             commands::error_reporter::error_reporter_report,
+            // System commands
+            commands::system::show_in_folder,
+            commands::system::open_external,
+            commands::system::get_app_version,
+            commands::system::get_platform_info,
+            // Update commands
+            commands::updates::check_for_updates,
+            commands::updates::download_and_install_update,
+            commands::updates::get_current_version,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
@@ -165,8 +176,16 @@ pub fn run() {
                     // Force the window to have a shadow and proper title bar settings
                     let _ = window.set_shadow(true);
                 }
+
+                // Set up native macOS menu
+                let menu = menu::create_menu(app.handle())?;
+                app.set_menu(menu)?;
             }
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            #[cfg(target_os = "macos")]
+            menu::handle_menu_event(app, event.id().as_ref());
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

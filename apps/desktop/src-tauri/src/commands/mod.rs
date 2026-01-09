@@ -10,5 +10,7 @@ pub mod images;
 pub mod import;
 pub mod llm;
 pub mod recovery;
+pub mod system;
+pub mod updates;
 pub mod versions;
 pub mod workspace;

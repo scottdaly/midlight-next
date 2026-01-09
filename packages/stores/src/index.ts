@@ -126,3 +126,22 @@ export {
   matchesShortcut,
 } from './shortcuts.js';
 export type { Shortcut, ShortcutCategory, ShortcutState } from './shortcuts.js';
+export {
+  updateStore,
+  hasUpdate,
+  showUpdateDialog,
+  updateStatus,
+  availableUpdate,
+  downloadProgress,
+  isChecking,
+  isDownloading,
+  isReadyToInstall,
+  updateError,
+} from './updates.js';
+export type { UpdateInfo, UpdateProgress, UpdateStatus, UpdateState } from './updates.js';
+export {
+  windowStateStore,
+  windowState,
+  windowStateLoaded,
+} from './windowState.js';
+export type { WindowState } from './windowState.js';
