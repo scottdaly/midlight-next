@@ -352,6 +352,52 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    // ============================================================================
+    // Transaction Creation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_transaction_new_creates_staging_dir() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let tx = ImportTransaction::new(dest).unwrap();
+
+        assert!(tx.staging_dir().exists());
+        assert!(tx.staging_dir().is_dir());
+        // Staging dir should be in parent of dest
+        assert!(tx
+            .staging_dir()
+            .to_string_lossy()
+            .contains(".import-staging-"));
+    }
+
+    #[test]
+    fn test_transaction_new_creates_parent_if_missing() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("nested/deep/import_dest");
+
+        let tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        // Parent directories should be created
+        assert!(dest.parent().unwrap().exists());
+        assert!(tx.staging_dir().exists());
+    }
+
+    #[test]
+    fn test_transaction_dest_path_accessor() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        assert_eq!(tx.dest_path(), dest.as_path());
+    }
+
+    // ============================================================================
+    // Stage File Tests
+    // ============================================================================
+
     #[test]
     fn test_transaction_stage_and_commit() {
         let temp = tempdir().unwrap();
@@ -383,6 +429,120 @@ mod tests {
     }
 
     #[test]
+    fn test_stage_file_empty_content() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("empty.txt"), b"").unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.files_committed, 1);
+        assert_eq!(stats.bytes_written, 0);
+
+        let content = fs::read_to_string(dest.join("empty.txt")).unwrap();
+        assert!(content.is_empty());
+    }
+
+    #[test]
+    fn test_stage_file_binary_content() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        let binary_data: Vec<u8> = (0..=255).collect();
+        tx.stage_file(Path::new("binary.bin"), &binary_data)
+            .unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.bytes_written, 256);
+
+        let content = fs::read(dest.join("binary.bin")).unwrap();
+        assert_eq!(content, binary_data);
+    }
+
+    #[test]
+    fn test_stage_file_large_content() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        // Create 1MB of content
+        let large_content = vec![b'x'; 1024 * 1024];
+        tx.stage_file(Path::new("large.txt"), &large_content)
+            .unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.bytes_written, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_stage_file_deeply_nested() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("a/b/c/d/e/f/deep.txt"), b"deep content")
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        assert!(dest.join("a/b/c/d/e/f/deep.txt").exists());
+        let content = fs::read_to_string(dest.join("a/b/c/d/e/f/deep.txt")).unwrap();
+        assert_eq!(content, "deep content");
+    }
+
+    #[test]
+    fn test_stage_file_overwrites_in_staging_dir() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("test.txt"), b"first").unwrap();
+
+        // Verify the staged file has "first"
+        let staged_content = fs::read_to_string(tx.staging_dir().join("test.txt")).unwrap();
+        assert_eq!(staged_content, "first");
+
+        // Stage again - this will overwrite the file in staging dir
+        tx.stage_file(Path::new("test.txt"), b"second").unwrap();
+
+        // Verify it's now "second" in staging dir
+        let staged_content = fs::read_to_string(tx.staging_dir().join("test.txt")).unwrap();
+        assert_eq!(staged_content, "second");
+
+        // Note: staged_files list now has duplicate entries, but the actual file has latest content
+        // The commit will try to move the same file twice (second attempt will be copy fallback)
+    }
+
+    #[test]
+    fn test_stage_file_with_special_characters() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("file with spaces.txt"), b"content")
+            .unwrap();
+        tx.stage_file(Path::new("file-with-dashes.txt"), b"content")
+            .unwrap();
+        tx.stage_file(Path::new("file_with_underscores.txt"), b"content")
+            .unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.files_committed, 3);
+    }
+
+    // ============================================================================
+    // Rollback Tests
+    // ============================================================================
+
+    #[test]
     fn test_transaction_rollback() {
         let temp = tempdir().unwrap();
         let dest = temp.path().join("import_dest");
@@ -407,6 +567,59 @@ mod tests {
     }
 
     #[test]
+    fn test_rollback_multiple_times() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        tx.stage_file(Path::new("test.md"), b"content").unwrap();
+
+        // Rollback multiple times should be safe
+        tx.rollback().unwrap();
+        tx.rollback().unwrap();
+        tx.rollback().unwrap();
+    }
+
+    #[test]
+    fn test_rollback_clears_stats() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        tx.stage_file(Path::new("test.md"), b"content").unwrap();
+        assert!(tx.stats().files_staged > 0);
+        assert!(tx.stats().bytes_written > 0);
+
+        tx.rollback().unwrap();
+
+        assert_eq!(tx.stats().files_staged, 0);
+        assert_eq!(tx.stats().bytes_written, 0);
+    }
+
+    #[test]
+    fn test_rollback_after_commit_is_noop() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("test.md"), b"content").unwrap();
+        tx.commit().unwrap();
+
+        // Rollback after commit should be no-op
+        tx.rollback().unwrap();
+
+        // File should still exist at destination
+        assert!(dest.join("test.md").exists());
+    }
+
+    // ============================================================================
+    // Auto-Rollback (Drop) Tests
+    // ============================================================================
+
+    #[test]
     fn test_transaction_auto_rollback_on_drop() {
         let temp = tempdir().unwrap();
         let dest = temp.path().join("import_dest");
@@ -426,6 +639,26 @@ mod tests {
     }
 
     #[test]
+    fn test_no_auto_rollback_after_commit() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        {
+            let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+            tx.stage_file(Path::new("test.md"), b"content").unwrap();
+            tx.commit().unwrap();
+            // tx dropped here after commit
+        }
+
+        // File should exist
+        assert!(dest.join("test.md").exists());
+    }
+
+    // ============================================================================
+    // Path Traversal Security Tests
+    // ============================================================================
+
+    #[test]
     fn test_transaction_path_traversal_rejected() {
         let temp = tempdir().unwrap();
         let dest = temp.path().join("import_dest");
@@ -436,6 +669,34 @@ mod tests {
         let result = tx.stage_file(Path::new("../escape.md"), b"malicious");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_path_traversal_double_dot() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        let result = tx.stage_file(Path::new("folder/../../../escape.md"), b"malicious");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_traversal_in_copy() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source.txt");
+        fs::write(&source, "content").unwrap();
+
+        let dest = temp.path().join("import_dest");
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        let result = tx.stage_copy(&source, Path::new("../escape.txt"));
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Stage Copy Tests
+    // ============================================================================
 
     #[test]
     fn test_stage_copy() {
@@ -457,6 +718,53 @@ mod tests {
     }
 
     #[test]
+    fn test_stage_copy_to_nested_path() {
+        let temp = tempdir().unwrap();
+        let source_file = temp.path().join("source.txt");
+        fs::write(&source_file, "content").unwrap();
+
+        let dest = temp.path().join("import_dest");
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_copy(&source_file, Path::new("nested/folder/copied.txt"))
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        assert!(dest.join("nested/folder/copied.txt").exists());
+    }
+
+    #[test]
+    fn test_stage_copy_nonexistent_source() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        let result = tx.stage_copy(Path::new("/nonexistent/file.txt"), Path::new("copied.txt"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stage_copy_tracks_bytes() {
+        let temp = tempdir().unwrap();
+        let source_file = temp.path().join("source.txt");
+        fs::write(&source_file, "12345678901234567890").unwrap(); // 20 bytes
+
+        let dest = temp.path().join("import_dest");
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        tx.stage_copy(&source_file, Path::new("copied.txt"))
+            .unwrap();
+
+        assert_eq!(tx.stats().bytes_written, 20);
+    }
+
+    // ============================================================================
+    // Verify Copy Tests
+    // ============================================================================
+
+    #[test]
     fn test_verify_copy() {
         let temp = tempdir().unwrap();
         let source_file = temp.path().join("source.txt");
@@ -470,5 +778,362 @@ mod tests {
 
         let staged_path = tx.staging_dir().join("copied.txt");
         assert!(tx.verify_copy(&source_file, &staged_path).unwrap());
+    }
+
+    #[test]
+    fn test_verify_copy_mismatch() {
+        let temp = tempdir().unwrap();
+        let source_file = temp.path().join("source.txt");
+        let other_file = temp.path().join("other.txt");
+        fs::write(&source_file, "content A").unwrap();
+        fs::write(&other_file, "content B").unwrap();
+
+        let dest = temp.path().join("import_dest");
+        let tx = ImportTransaction::new(dest).unwrap();
+
+        // Verify should fail for different files
+        assert!(!tx.verify_copy(&source_file, &other_file).unwrap());
+    }
+
+    #[test]
+    fn test_verify_copy_same_content_different_files() {
+        let temp = tempdir().unwrap();
+        let file_a = temp.path().join("a.txt");
+        let file_b = temp.path().join("b.txt");
+        fs::write(&file_a, "identical content").unwrap();
+        fs::write(&file_b, "identical content").unwrap();
+
+        let dest = temp.path().join("import_dest");
+        let tx = ImportTransaction::new(dest).unwrap();
+
+        // Verify should pass for files with same content
+        assert!(tx.verify_copy(&file_a, &file_b).unwrap());
+    }
+
+    // ============================================================================
+    // Commit Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_creates_destination() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("new_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+        tx.stage_file(Path::new("test.txt"), b"content").unwrap();
+
+        assert!(!dest.exists());
+
+        tx.commit().unwrap();
+
+        assert!(dest.exists());
+    }
+
+    #[test]
+    fn test_commit_double_commit_fails() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+        tx.stage_file(Path::new("test.txt"), b"content").unwrap();
+
+        tx.commit().unwrap();
+
+        let result = tx.commit();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_commit_empty_transaction() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+
+        // Commit with no staged files
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.files_staged, 0);
+        assert_eq!(stats.files_committed, 0);
+        assert_eq!(stats.bytes_written, 0);
+    }
+
+    #[test]
+    fn test_commit_preserves_content() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        let content = "Line 1\nLine 2\nLine 3\n日本語テスト";
+        tx.stage_file(Path::new("test.txt"), content.as_bytes())
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        let read_content = fs::read_to_string(dest.join("test.txt")).unwrap();
+        assert_eq!(read_content, content);
+    }
+
+    // ============================================================================
+    // Stats Tests
+    // ============================================================================
+
+    #[test]
+    fn test_stats_initial() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let tx = ImportTransaction::new(dest).unwrap();
+        let stats = tx.stats();
+
+        assert_eq!(stats.files_staged, 0);
+        assert_eq!(stats.bytes_written, 0);
+        assert_eq!(stats.files_committed, 0);
+    }
+
+    #[test]
+    fn test_stats_after_staging() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+        tx.stage_file(Path::new("a.txt"), b"content1").unwrap(); // 8 bytes
+        tx.stage_file(Path::new("b.txt"), b"content2").unwrap(); // 8 bytes
+
+        let stats = tx.stats();
+        assert_eq!(stats.files_staged, 2);
+        assert_eq!(stats.bytes_written, 16);
+        assert_eq!(stats.files_committed, 0);
+    }
+
+    #[test]
+    fn test_stats_after_commit() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest).unwrap();
+        tx.stage_file(Path::new("a.txt"), b"content").unwrap();
+        tx.stage_file(Path::new("b.txt"), b"content").unwrap();
+
+        tx.commit().unwrap();
+
+        let stats = tx.stats();
+        assert_eq!(stats.files_staged, 2);
+        assert_eq!(stats.files_committed, 2);
+    }
+
+    // ============================================================================
+    // TransactionStats Tests
+    // ============================================================================
+
+    #[test]
+    fn test_transaction_stats_debug() {
+        let stats = TransactionStats {
+            files_staged: 5,
+            bytes_written: 1024,
+            files_committed: 5,
+        };
+
+        let debug = format!("{:?}", stats);
+        assert!(debug.contains("files_staged"));
+        assert!(debug.contains("5"));
+    }
+
+    #[test]
+    fn test_transaction_stats_clone() {
+        let stats = TransactionStats {
+            files_staged: 10,
+            bytes_written: 2048,
+            files_committed: 10,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.files_staged, stats.files_staged);
+        assert_eq!(cloned.bytes_written, stats.bytes_written);
+        assert_eq!(cloned.files_committed, stats.files_committed);
+    }
+
+    // ============================================================================
+    // compute_file_hash Tests
+    // ============================================================================
+
+    #[test]
+    fn test_compute_file_hash_same_content() {
+        let temp = tempdir().unwrap();
+        let file_a = temp.path().join("a.txt");
+        let file_b = temp.path().join("b.txt");
+
+        fs::write(&file_a, "same content").unwrap();
+        fs::write(&file_b, "same content").unwrap();
+
+        let hash_a = compute_file_hash(&file_a).unwrap();
+        let hash_b = compute_file_hash(&file_b).unwrap();
+
+        assert_eq!(hash_a, hash_b);
+    }
+
+    #[test]
+    fn test_compute_file_hash_different_content() {
+        let temp = tempdir().unwrap();
+        let file_a = temp.path().join("a.txt");
+        let file_b = temp.path().join("b.txt");
+
+        fs::write(&file_a, "content A").unwrap();
+        fs::write(&file_b, "content B").unwrap();
+
+        let hash_a = compute_file_hash(&file_a).unwrap();
+        let hash_b = compute_file_hash(&file_b).unwrap();
+
+        assert_ne!(hash_a, hash_b);
+    }
+
+    #[test]
+    fn test_compute_file_hash_empty_file() {
+        let temp = tempdir().unwrap();
+        let file = temp.path().join("empty.txt");
+        fs::write(&file, "").unwrap();
+
+        let hash = compute_file_hash(&file).unwrap();
+        // SHA-256 of empty string
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_compute_file_hash_nonexistent() {
+        let result = compute_file_hash(Path::new("/nonexistent/file.txt"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compute_file_hash_large_file() {
+        let temp = tempdir().unwrap();
+        let file = temp.path().join("large.txt");
+
+        // Create a file larger than the 8192 byte buffer
+        let content = vec![b'x'; 32768];
+        fs::write(&file, &content).unwrap();
+
+        let hash = compute_file_hash(&file).unwrap();
+        // Just verify it produces a valid 64-char hex hash
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ============================================================================
+    // validate_disk_space Tests
+    // ============================================================================
+
+    #[test]
+    fn test_validate_disk_space_existing_path() {
+        let temp = tempdir().unwrap();
+
+        let result = validate_disk_space(temp.path(), 1024);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_disk_space_nested_nonexistent() {
+        let temp = tempdir().unwrap();
+        let nested = temp.path().join("a/b/c/d/dest");
+
+        // Should find existing parent
+        let result = validate_disk_space(&nested, 1024);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_disk_space_zero_bytes() {
+        let temp = tempdir().unwrap();
+
+        let result = validate_disk_space(temp.path(), 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_disk_space_large_requirement() {
+        let temp = tempdir().unwrap();
+
+        // Request a large amount - function currently doesn't actually check space
+        let result = validate_disk_space(temp.path(), 1024 * 1024 * 1024 * 100); // 100GB
+        assert!(result.is_ok()); // Currently always succeeds as space check not implemented
+    }
+
+    // ============================================================================
+    // Edge Case Tests
+    // ============================================================================
+
+    #[test]
+    fn test_stage_file_after_rollback() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("first.txt"), b"first").unwrap();
+        tx.rollback().unwrap();
+
+        // Staging after rollback should still work but staging dir is gone
+        // This will fail because staging dir was removed
+        let result = tx.stage_file(Path::new("second.txt"), b"second");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_files_same_directory() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("dir/a.txt"), b"a").unwrap();
+        tx.stage_file(Path::new("dir/b.txt"), b"b").unwrap();
+        tx.stage_file(Path::new("dir/c.txt"), b"c").unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.files_committed, 3);
+
+        assert!(dest.join("dir/a.txt").exists());
+        assert!(dest.join("dir/b.txt").exists());
+        assert!(dest.join("dir/c.txt").exists());
+    }
+
+    #[test]
+    fn test_stage_mixed_file_and_copy() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source.txt");
+        fs::write(&source, "copied content").unwrap();
+
+        let dest = temp.path().join("import_dest");
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        tx.stage_file(Path::new("written.txt"), b"written content")
+            .unwrap();
+        tx.stage_copy(&source, Path::new("copied.txt")).unwrap();
+
+        let stats = tx.commit().unwrap();
+        assert_eq!(stats.files_committed, 2);
+
+        assert!(dest.join("written.txt").exists());
+        assert!(dest.join("copied.txt").exists());
+    }
+
+    #[test]
+    fn test_unicode_content() {
+        let temp = tempdir().unwrap();
+        let dest = temp.path().join("import_dest");
+
+        let mut tx = ImportTransaction::new(dest.clone()).unwrap();
+
+        let unicode_content = "Hello 世界! 🌍 Привет мир!";
+        tx.stage_file(Path::new("unicode.txt"), unicode_content.as_bytes())
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        let content = fs::read_to_string(dest.join("unicode.txt")).unwrap();
+        assert_eq!(content, unicode_content);
     }
 }

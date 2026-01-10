@@ -55,6 +55,7 @@ futures = "0.3"
 lazy_static = "1.5"
 url = "2"
 open = "5"
+async-trait = "0.1"           # For async trait definitions
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
@@ -68,3 +69,8 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3.24.0"
+mockall = "0.13"              # Mock generation from traits
+tokio-test = "0.4"            # Async test utilities
+wiremock = "0.6"              # HTTP mocking for API tests
+fake = { version = "3.0", features = ["derive"] }  # Test data generation
+rstest = "0.23"               # Parameterized tests

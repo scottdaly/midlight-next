@@ -8,6 +8,10 @@ mod commands;
 #[cfg(target_os = "macos")]
 mod menu;
 mod services;
+pub mod traits;
+
+#[cfg(test)]
+mod test_utils;
 
 use std::sync::Arc;
 use tauri::Manager;

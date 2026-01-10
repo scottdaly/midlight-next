@@ -1,6 +1,7 @@
 // Error types for Midlight services
 
 use thiserror::Error;
+use crate::traits::object_store::ObjectStoreError;
 
 #[derive(Error, Debug)]
 pub enum MidlightError {
@@ -101,6 +102,17 @@ impl serde::Serialize for ImportError {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl From<ObjectStoreError> for MidlightError {
+    fn from(err: ObjectStoreError) -> Self {
+        match err {
+            ObjectStoreError::NotFound(hash) => MidlightError::ObjectNotFound(hash),
+            ObjectStoreError::IoError(e) => MidlightError::Io(e),
+            ObjectStoreError::CompressionError(msg) => MidlightError::Internal(msg),
+            ObjectStoreError::StorageError(msg) => MidlightError::Internal(msg),
+        }
     }
 }
 

@@ -56,7 +56,7 @@ pub async fn workspace_image_exists(
     ref_id: String,
 ) -> Result<bool, String> {
     let manager = ImageManager::new(Path::new(&workspace_root));
-    Ok(manager.exists(&ref_id))
+    Ok(manager.exists(&ref_id).await)
 }
 
 /// Delete an image

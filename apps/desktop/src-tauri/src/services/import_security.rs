@@ -500,6 +500,10 @@ pub fn format_user_error(error: &std::io::Error) -> String {
 mod tests {
     use super::*;
 
+    // ============================================
+    // sanitize_filename tests
+    // ============================================
+
     #[test]
     fn test_sanitize_filename_basic() {
         assert_eq!(sanitize_filename("hello.md").unwrap(), "hello.md");
@@ -533,6 +537,120 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_filename_empty() {
+        assert!(sanitize_filename("").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_filename_only_control_chars() {
+        // String with only control characters should fail
+        assert!(sanitize_filename("\x00\x01\x02").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_filename_only_dots_and_spaces() {
+        assert!(sanitize_filename("... ").is_err());
+        assert!(sanitize_filename(". . .").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_filename_long_truncation() {
+        // Test filename longer than 255 characters
+        let long_name = "a".repeat(300) + ".md";
+        let result = sanitize_filename(&long_name).unwrap();
+        assert!(result.len() <= ImportConfig::MAX_FILENAME_LENGTH);
+        // Should preserve extension
+        assert!(result.ends_with(".md"));
+    }
+
+    #[test]
+    fn test_sanitize_filename_long_truncation_no_extension() {
+        // Test very long filename without extension
+        let long_name = "a".repeat(300);
+        let result = sanitize_filename(&long_name).unwrap();
+        assert_eq!(result.len(), ImportConfig::MAX_FILENAME_LENGTH);
+    }
+
+    #[test]
+    fn test_sanitize_filename_long_extension() {
+        // Test filename with long extension - should truncate the whole thing
+        let long_ext = ".".to_string() + &"x".repeat(100);
+        let result = sanitize_filename(&("a".repeat(200) + &long_ext)).unwrap();
+        assert!(result.len() <= ImportConfig::MAX_FILENAME_LENGTH);
+        // Should preserve extension when stem is long enough
+        assert!(result.ends_with(&long_ext));
+    }
+
+    #[test]
+    fn test_sanitize_filename_all_windows_reserved_names() {
+        // Test all Windows reserved names
+        for name in WINDOWS_RESERVED_NAMES {
+            assert!(
+                sanitize_filename(name).is_err(),
+                "Expected {} to be rejected",
+                name
+            );
+            // Also test with extension
+            let with_ext = format!("{}.txt", name);
+            assert!(
+                sanitize_filename(&with_ext).is_err(),
+                "Expected {} to be rejected",
+                with_ext
+            );
+            // Test case insensitivity
+            let lowercase = name.to_lowercase();
+            assert!(
+                sanitize_filename(&lowercase).is_err(),
+                "Expected {} to be rejected",
+                lowercase
+            );
+        }
+    }
+
+    #[test]
+    fn test_sanitize_filename_unicode_normalization() {
+        // Test that Unicode is normalized to NFC
+        // é as e + combining acute (NFD) should normalize to é (NFC)
+        let nfd = "cafe\u{0301}.md"; // e + combining acute (5 chars in NFD: c-a-f-e-combining_acute)
+        let result = sanitize_filename(nfd).unwrap();
+        // After NFC normalization, "café.md" = 7 chars: c-a-f-é-.-m-d
+        assert_eq!(result.chars().count(), 7);
+        // Verify it contains the NFC form of é
+        assert!(result.contains('é') || result.contains("\u{00E9}"));
+    }
+
+    #[test]
+    fn test_sanitize_filename_all_invalid_chars() {
+        // Test all invalid characters are replaced
+        for ch in INVALID_FILENAME_CHARS {
+            let filename = format!("test{}file.md", ch);
+            let result = sanitize_filename(&filename);
+            if *ch == '\0' {
+                // Null bytes are stripped, not replaced
+                assert!(result.is_ok());
+            } else {
+                let sanitized = result.unwrap();
+                assert!(
+                    !sanitized.contains(*ch),
+                    "Character {:?} should be removed",
+                    ch
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sanitize_filename_mixed_content() {
+        // Complex filename with multiple issues
+        let result = sanitize_filename("hello<world>:test|file?.md...  ").unwrap();
+        assert_eq!(result, "hello_world__test_file_.md");
+    }
+
+    // ============================================
+    // sanitize_relative_path tests
+    // ============================================
+
+    #[test]
     fn test_sanitize_relative_path_basic() {
         let result = sanitize_relative_path("folder/file.md").unwrap();
         assert_eq!(result, PathBuf::from("folder/file.md"));
@@ -552,6 +670,192 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_relative_path_empty() {
+        assert!(sanitize_relative_path("").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_too_long() {
+        let long_path = "a/".repeat(600);
+        assert!(sanitize_relative_path(&long_path).is_err());
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_null_bytes() {
+        assert!(sanitize_relative_path("folder/file\0.md").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_url_encoded_traversal() {
+        // Various URL-encoded path traversal attempts
+        assert!(sanitize_relative_path("%2e%2e%2f").is_err()); // ../
+        assert!(sanitize_relative_path("..%2f").is_err()); // ../
+        // Note: %5c (\) is only a path separator on Windows, not Unix
+        // So we only test forward slash encoding which is universal
+        assert!(sanitize_relative_path("%2e%2e/%2e%2e/secret").is_err()); // ../../secret
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_dot_current_dir() {
+        // Current directory (.) should be skipped
+        let result = sanitize_relative_path("./folder/./file.md").unwrap();
+        assert_eq!(result, PathBuf::from("folder/file.md"));
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_nested_dirs() {
+        let result = sanitize_relative_path("a/b/c/d/e/file.md").unwrap();
+        assert_eq!(result, PathBuf::from("a/b/c/d/e/file.md"));
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_windows_drive_letters() {
+        // Various Windows drive letter patterns
+        assert!(sanitize_relative_path("C:file.md").is_err());
+        assert!(sanitize_relative_path("D:\\folder\\file.md").is_err());
+        assert!(sanitize_relative_path("Z:/folder/file.md").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_relative_path_only_dots() {
+        // Path that becomes empty after sanitization
+        assert!(sanitize_relative_path("./.").is_err());
+    }
+
+    // ============================================
+    // is_path_safe tests
+    // ============================================
+
+    #[test]
+    fn test_is_path_safe_within_base() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path();
+        let dest = base.join("subdir").join("file.md");
+
+        // Create the subdir
+        std::fs::create_dir_all(base.join("subdir")).unwrap();
+
+        assert!(is_path_safe(&dest, base));
+    }
+
+    #[test]
+    fn test_is_path_safe_outside_base() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("workspace");
+        std::fs::create_dir_all(&base).unwrap();
+
+        // Try to escape to parent
+        let dest = temp.path().join("outside.md");
+
+        assert!(!is_path_safe(&dest, &base));
+    }
+
+    #[test]
+    fn test_is_path_safe_nonexistent_base() {
+        let dest = PathBuf::from("/some/dest/file.md");
+        let base = PathBuf::from("/nonexistent/base");
+
+        // Should return false if base doesn't exist
+        assert!(!is_path_safe(&dest, &base));
+    }
+
+    #[test]
+    fn test_is_path_safe_new_file_in_existing_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path();
+        let subdir = base.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        // New file in existing subdirectory
+        let dest = subdir.join("newfile.md");
+        assert!(is_path_safe(&dest, base));
+    }
+
+    #[test]
+    fn test_is_path_safe_deeply_nested() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path();
+        let deep_dir = base.join("a").join("b").join("c").join("d");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+
+        let dest = deep_dir.join("file.md");
+        assert!(is_path_safe(&dest, base));
+    }
+
+    // ============================================
+    // YAML parsing tests
+    // ============================================
+
+    #[test]
+    fn test_safe_parse_yaml_basic() {
+        let yaml = "key: value\nlist:\n  - item1\n  - item2";
+        let result = safe_parse_yaml(yaml).unwrap();
+        assert_eq!(result["key"].as_str(), Some("value"));
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_too_large() {
+        let large_yaml = "x".repeat(ImportConfig::MAX_YAML_SIZE + 1);
+        assert!(safe_parse_yaml(&large_yaml).is_err());
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_max_depth() {
+        // Create deeply nested YAML that exceeds max depth
+        let mut yaml = String::new();
+        for i in 0..=ImportConfig::MAX_YAML_DEPTH + 5 {
+            yaml.push_str(&"  ".repeat(i));
+            yaml.push_str(&format!("level{}: \n", i));
+        }
+        yaml.push_str(&"  ".repeat(ImportConfig::MAX_YAML_DEPTH + 6));
+        yaml.push_str("value: end");
+
+        assert!(safe_parse_yaml(&yaml).is_err());
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_at_max_depth() {
+        // Test that moderate depth (well under limit) succeeds
+        let mut yaml = String::from("root:\n");
+        let mut indent = 2;
+        // Use a depth well under the limit to ensure it passes
+        for i in 1..10 {
+            yaml.push_str(&" ".repeat(indent));
+            yaml.push_str(&format!("level{}: \n", i));
+            indent += 2;
+        }
+        yaml.push_str(&" ".repeat(indent));
+        yaml.push_str("value: end");
+
+        assert!(safe_parse_yaml(&yaml).is_ok());
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_invalid_syntax() {
+        let invalid = "key: [unclosed bracket";
+        assert!(safe_parse_yaml(invalid).is_err());
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_empty() {
+        // Empty YAML should parse to null
+        let result = safe_parse_yaml("").unwrap();
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_safe_parse_yaml_sequence_depth() {
+        // Test that sequences also count toward depth
+        let yaml = "- - - - - value";
+        let result = safe_parse_yaml(yaml);
+        assert!(result.is_ok());
+    }
+
+    // ============================================
+    // Front matter tests
+    // ============================================
+
+    #[test]
     fn test_safe_parse_front_matter() {
         let content = "---\ntitle: Hello\nauthor: Test\n---\n\n# Content";
         let result = safe_parse_front_matter(content).unwrap();
@@ -568,12 +872,71 @@ mod tests {
     }
 
     #[test]
+    fn test_safe_parse_front_matter_empty_yaml() {
+        let content = "---\n---\n\n# Content";
+        let result = safe_parse_front_matter(content).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_safe_parse_front_matter_only_opening() {
+        let content = "---\n";
+        let result = safe_parse_front_matter(content).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_safe_parse_front_matter_unclosed() {
+        let content = "---\ntitle: Test\nNo closing delimiter";
+        let result = safe_parse_front_matter(content).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_safe_parse_front_matter_at_end() {
+        let content = "---\ntitle: Test\n---";
+        let result = safe_parse_front_matter(content).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_safe_parse_front_matter_complex() {
+        let content = r#"---
+title: My Document
+tags:
+  - rust
+  - testing
+date: 2024-01-01
+nested:
+  key: value
+---
+
+# Content here"#;
+        let result = safe_parse_front_matter(content).unwrap();
+        assert!(result.is_some());
+        let fm = result.unwrap();
+        assert_eq!(fm.data["title"].as_str(), Some("My Document"));
+        assert!(fm.data["tags"].is_sequence());
+    }
+
+    // ============================================
+    // URL validation tests
+    // ============================================
+
+    #[test]
     fn test_is_external_url() {
         assert!(is_external_url("https://example.com"));
         assert!(is_external_url("http://example.com"));
         assert!(is_external_url("mailto:test@example.com"));
         assert!(!is_external_url("./local-file.md"));
         assert!(!is_external_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn test_is_external_url_case_insensitive() {
+        assert!(is_external_url("HTTPS://example.com"));
+        assert!(is_external_url("HTTP://example.com"));
+        assert!(is_external_url("MAILTO:test@example.com"));
     }
 
     #[test]
@@ -586,12 +949,48 @@ mod tests {
     }
 
     #[test]
+    fn test_is_dangerous_scheme_case_insensitive() {
+        assert!(is_dangerous_scheme("JAVASCRIPT:alert(1)"));
+        assert!(is_dangerous_scheme("DATA:text/html,<script>"));
+        assert!(is_dangerous_scheme("VBScript:msgbox"));
+        assert!(is_dangerous_scheme("FILE:///etc/passwd"));
+    }
+
+    // ============================================
+    // CSV cell sanitization tests
+    // ============================================
+
+    #[test]
     fn test_sanitize_csv_cell() {
         assert_eq!(sanitize_csv_cell("=SUM(A1:A10)"), "'=SUM(A1:A10)");
         assert_eq!(sanitize_csv_cell("+1234"), "'+1234");
         assert_eq!(sanitize_csv_cell("normal text"), "normal text");
         assert_eq!(sanitize_csv_cell("with|pipe"), "with\\|pipe");
     }
+
+    #[test]
+    fn test_sanitize_csv_cell_all_formula_chars() {
+        assert_eq!(sanitize_csv_cell("=formula"), "'=formula");
+        assert_eq!(sanitize_csv_cell("+positive"), "'+positive");
+        assert_eq!(sanitize_csv_cell("-negative"), "'-negative");
+        assert_eq!(sanitize_csv_cell("@mention"), "'@mention");
+    }
+
+    #[test]
+    fn test_sanitize_csv_cell_whitespace() {
+        // Leading/trailing whitespace is trimmed before checking
+        assert_eq!(sanitize_csv_cell("  =formula  "), "'=formula");
+        assert_eq!(sanitize_csv_cell("  normal  "), "normal");
+    }
+
+    #[test]
+    fn test_sanitize_csv_cell_multiple_pipes() {
+        assert_eq!(sanitize_csv_cell("a|b|c"), "a\\|b\\|c");
+    }
+
+    // ============================================
+    // AllowedExtension tests
+    // ============================================
 
     #[test]
     fn test_allowed_extension() {
@@ -610,5 +1009,117 @@ mod tests {
             Some(AllowedExtension::Image)
         );
         assert_eq!(AllowedExtension::from_filename("test.exe"), None);
+    }
+
+    #[test]
+    fn test_allowed_extension_all_markdown_variants() {
+        assert!(AllowedExtension::Markdown.matches("file.md"));
+        assert!(AllowedExtension::Markdown.matches("file.markdown"));
+        assert!(AllowedExtension::Markdown.matches("file.mdown"));
+        assert!(AllowedExtension::Markdown.matches("file.mkd"));
+    }
+
+    #[test]
+    fn test_allowed_extension_all_image_types() {
+        for ext in AllowedExtension::Image.extensions() {
+            let filename = format!("image.{}", ext);
+            assert!(
+                AllowedExtension::Image.matches(&filename),
+                "Expected {} to match Image",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_allowed_extension_all_attachment_types() {
+        for ext in AllowedExtension::Attachment.extensions() {
+            let filename = format!("file.{}", ext);
+            assert!(
+                AllowedExtension::Attachment.matches(&filename),
+                "Expected {} to match Attachment",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_allowed_extension_data_types() {
+        assert!(AllowedExtension::Data.matches("data.csv"));
+        assert!(AllowedExtension::Data.matches("config.json"));
+        assert!(!AllowedExtension::Data.matches("data.xml"));
+    }
+
+    // ============================================
+    // validate_path tests
+    // ============================================
+
+    #[test]
+    fn test_validate_path_empty() {
+        assert!(validate_path("").is_err());
+    }
+
+    #[test]
+    fn test_validate_path_null_bytes() {
+        assert!(validate_path("path/with\0null").is_err());
+    }
+
+    #[test]
+    fn test_validate_path_too_long() {
+        let long_path = "a".repeat(ImportConfig::MAX_PATH_LENGTH + 1);
+        assert!(validate_path(&long_path).is_err());
+    }
+
+    #[test]
+    fn test_validate_path_control_chars() {
+        // Control characters (except tabs, newlines, carriage returns) should fail
+        assert!(validate_path("path\x07with\x08bell").is_err());
+    }
+
+    #[test]
+    fn test_validate_path_allowed_whitespace() {
+        // Tabs, newlines, carriage returns are allowed
+        assert!(validate_path("path\twith\ttabs").is_ok());
+        assert!(validate_path("path\nwith\nnewlines").is_ok());
+        assert!(validate_path("path\rwith\rreturns").is_ok());
+    }
+
+    #[test]
+    fn test_validate_path_valid() {
+        assert!(validate_path("valid/path/to/file.md").is_ok());
+        assert!(validate_path("file.md").is_ok());
+        assert!(validate_path("path with spaces/file.md").is_ok());
+    }
+
+    // ============================================
+    // format_user_error tests
+    // ============================================
+
+    #[test]
+    fn test_format_user_error_permission_denied() {
+        let error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test");
+        let msg = format_user_error(&error);
+        assert!(msg.contains("Permission denied"));
+    }
+
+    #[test]
+    fn test_format_user_error_not_found() {
+        let error = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let msg = format_user_error(&error);
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn test_format_user_error_already_exists() {
+        let error = std::io::Error::new(std::io::ErrorKind::AlreadyExists, "test");
+        let msg = format_user_error(&error);
+        assert!(msg.contains("already exists"));
+    }
+
+    #[test]
+    fn test_format_user_error_other() {
+        let error = std::io::Error::new(std::io::ErrorKind::Other, "custom error");
+        let msg = format_user_error(&error);
+        assert!(msg.contains("custom error"));
     }
 }

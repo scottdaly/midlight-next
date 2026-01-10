@@ -144,10 +144,13 @@ pub fn normalize_color_to_hex(color: Option<&str>) -> Option<String> {
         // Handle 3-digit hex
         if hex.len() == 3 {
             let chars: Vec<char> = hex.chars().collect();
-            return Some(format!(
-                "{}{}{}{}{}{}",
-                chars[0], chars[0], chars[1], chars[1], chars[2], chars[2]
-            ));
+            return Some(
+                format!(
+                    "{}{}{}{}{}{}",
+                    chars[0], chars[0], chars[1], chars[1], chars[2], chars[2]
+                )
+                .to_uppercase(),
+            );
         }
         return Some(hex.to_uppercase());
     }
@@ -823,67 +826,1386 @@ where
 mod tests {
     use super::*;
 
+    // ============================================================================
+    // px_to_half_points Tests
+    // ============================================================================
+
     #[test]
-    fn test_px_to_half_points() {
+    fn test_px_to_half_points_standard_sizes() {
         assert_eq!(px_to_half_points("12px"), 24);
-        assert_eq!(px_to_half_points("16px"), 32);
         assert_eq!(px_to_half_points("14px"), 28);
-        assert_eq!(px_to_half_points("0px"), 24); // Default
-        assert_eq!(px_to_half_points("invalid"), 28); // Default 14pt
+        assert_eq!(px_to_half_points("16px"), 32);
+        assert_eq!(px_to_half_points("18px"), 36);
+        assert_eq!(px_to_half_points("24px"), 48);
     }
 
     #[test]
-    fn test_normalize_color_to_hex() {
+    fn test_px_to_half_points_zero_value() {
+        // Zero or negative values should return default (24 = 12pt)
+        assert_eq!(px_to_half_points("0px"), 24);
+    }
+
+    #[test]
+    fn test_px_to_half_points_invalid_input() {
+        // Invalid input should return default (28 = 14pt)
+        assert_eq!(px_to_half_points("invalid"), 28);
+        assert_eq!(px_to_half_points(""), 28);
+        assert_eq!(px_to_half_points("abc"), 28);
+    }
+
+    #[test]
+    fn test_px_to_half_points_with_whitespace() {
+        // Trailing whitespace after "px" prevents trim_end_matches from matching
+        assert_eq!(px_to_half_points("16px "), 28);
+        // Leading whitespace is handled via trim() after trim_end_matches
+        assert_eq!(px_to_half_points(" 16px"), 32);
+        // Space between number and px: "16 px" → trim_end_matches("px") → "16 " → trim() → "16"
+        assert_eq!(px_to_half_points("16 px"), 32);
+    }
+
+    #[test]
+    fn test_px_to_half_points_decimal_values() {
+        assert_eq!(px_to_half_points("15.5px"), 31);
+        assert_eq!(px_to_half_points("14.2px"), 28);
+    }
+
+    #[test]
+    fn test_px_to_half_points_clamping() {
+        // Very small values should be clamped to minimum (2)
+        assert_eq!(px_to_half_points("0.1px"), 2);
+
+        // Very large values should be clamped to maximum (400 = 200pt)
+        assert_eq!(px_to_half_points("300px"), 400);
+    }
+
+    // ============================================================================
+    // normalize_color_to_hex Tests
+    // ============================================================================
+
+    #[test]
+    fn test_normalize_color_to_hex_full_hex() {
         assert_eq!(
             normalize_color_to_hex(Some("#ff0000")),
             Some("FF0000".to_string())
         );
         assert_eq!(
+            normalize_color_to_hex(Some("#00FF00")),
+            Some("00FF00".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("#0000ff")),
+            Some("0000FF".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_color_to_hex_shorthand() {
+        assert_eq!(
             normalize_color_to_hex(Some("#abc")),
             Some("AABBCC".to_string())
         );
+        assert_eq!(
+            normalize_color_to_hex(Some("#f00")),
+            Some("FF0000".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("#0f0")),
+            Some("00FF00".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_color_to_hex_rgb() {
         assert_eq!(
             normalize_color_to_hex(Some("rgb(255, 0, 0)")),
             Some("FF0000".to_string())
         );
         assert_eq!(
+            normalize_color_to_hex(Some("rgb(0, 255, 0)")),
+            Some("00FF00".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgb(0, 0, 255)")),
+            Some("0000FF".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgb(128, 128, 128)")),
+            Some("808080".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_color_to_hex_rgba() {
+        assert_eq!(
             normalize_color_to_hex(Some("rgba(0, 255, 0, 0.5)")),
             Some("00FF00".to_string())
         );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgba(255, 0, 0, 1)")),
+            Some("FF0000".to_string())
+        );
+        assert_eq!(
+            normalize_color_to_hex(Some("rgba(0, 0, 255, 0)")),
+            Some("0000FF".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_color_to_hex_none_and_empty() {
         assert_eq!(normalize_color_to_hex(None), None);
         assert_eq!(normalize_color_to_hex(Some("")), None);
     }
 
     #[test]
-    fn test_extract_font_name() {
+    fn test_normalize_color_to_hex_invalid() {
+        assert_eq!(normalize_color_to_hex(Some("not-a-color")), None);
+        assert_eq!(normalize_color_to_hex(Some("red")), None); // Named colors not supported
+    }
+
+    #[test]
+    fn test_normalize_color_to_hex_rgb_with_spacing() {
+        assert_eq!(
+            normalize_color_to_hex(Some("rgb( 255 , 0 , 0 )")),
+            Some("FF0000".to_string())
+        );
+    }
+
+    // ============================================================================
+    // extract_font_name Tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_font_name_web_fonts() {
         assert_eq!(extract_font_name(Some("Inter, sans-serif")), "Arial");
+        assert_eq!(extract_font_name(Some("Roboto, sans-serif")), "Arial");
+        assert_eq!(extract_font_name(Some("Open Sans, sans-serif")), "Arial");
+        assert_eq!(extract_font_name(Some("Lato, sans-serif")), "Arial");
+    }
+
+    #[test]
+    fn test_extract_font_name_serif_fonts() {
         assert_eq!(extract_font_name(Some("Merriweather, serif")), "Georgia");
+        assert_eq!(extract_font_name(Some("Crimson Text, serif")), "Georgia");
+        assert_eq!(extract_font_name(Some("Lora, serif")), "Georgia");
+        assert_eq!(extract_font_name(Some("Playfair Display, serif")), "Georgia");
+    }
+
+    #[test]
+    fn test_extract_font_name_monospace_fonts() {
         assert_eq!(
             extract_font_name(Some("\"JetBrains Mono\", monospace")),
             "Courier New"
         );
+        assert_eq!(
+            extract_font_name(Some("Fira Code, monospace")),
+            "Courier New"
+        );
+    }
+
+    #[test]
+    fn test_extract_font_name_generic_families() {
+        // Generic families should return default
         assert_eq!(extract_font_name(Some("sans-serif")), "Georgia");
+        assert_eq!(extract_font_name(Some("serif")), "Georgia");
+        assert_eq!(extract_font_name(Some("monospace")), "Georgia");
+        assert_eq!(extract_font_name(Some("cursive")), "Georgia");
+        assert_eq!(extract_font_name(Some("fantasy")), "Georgia");
+    }
+
+    #[test]
+    fn test_extract_font_name_none() {
         assert_eq!(extract_font_name(None), "Georgia");
     }
 
     #[test]
-    fn test_tiptap_align_to_docx() {
+    fn test_extract_font_name_unknown_font() {
+        // Unknown fonts should return default
+        assert_eq!(extract_font_name(Some("Custom Font, sans-serif")), "Georgia");
+    }
+
+    #[test]
+    fn test_extract_font_name_with_quotes() {
+        assert_eq!(extract_font_name(Some("'JetBrains Mono', monospace")), "Courier New");
+        assert_eq!(extract_font_name(Some("\"Open Sans\", sans-serif")), "Arial");
+    }
+
+    // ============================================================================
+    // tiptap_align_to_docx Tests
+    // ============================================================================
+
+    #[test]
+    fn test_tiptap_align_to_docx_left() {
         assert!(matches!(
             tiptap_align_to_docx(Some("left")),
             AlignmentType::Left
         ));
+    }
+
+    #[test]
+    fn test_tiptap_align_to_docx_center() {
         assert!(matches!(
             tiptap_align_to_docx(Some("center")),
             AlignmentType::Center
         ));
+    }
+
+    #[test]
+    fn test_tiptap_align_to_docx_right() {
         assert!(matches!(
             tiptap_align_to_docx(Some("right")),
             AlignmentType::Right
         ));
+    }
+
+    #[test]
+    fn test_tiptap_align_to_docx_justify() {
         assert!(matches!(
             tiptap_align_to_docx(Some("justify")),
             AlignmentType::Justified
         ));
+    }
+
+    #[test]
+    fn test_tiptap_align_to_docx_none() {
         assert!(matches!(tiptap_align_to_docx(None), AlignmentType::Left));
+    }
+
+    #[test]
+    fn test_tiptap_align_to_docx_unknown() {
+        assert!(matches!(
+            tiptap_align_to_docx(Some("unknown")),
+            AlignmentType::Left
+        ));
+    }
+
+    // ============================================================================
+    // hex_to_docx_highlight Tests
+    // ============================================================================
+
+    #[test]
+    fn test_hex_to_docx_highlight_standard_colors() {
+        assert_eq!(hex_to_docx_highlight("#ffff00"), "yellow");
+        assert_eq!(hex_to_docx_highlight("#00ff00"), "green");
+        assert_eq!(hex_to_docx_highlight("#00ffff"), "cyan");
+        assert_eq!(hex_to_docx_highlight("#ff00ff"), "magenta");
+        assert_eq!(hex_to_docx_highlight("#0000ff"), "blue");
+        assert_eq!(hex_to_docx_highlight("#ff0000"), "red");
+    }
+
+    #[test]
+    fn test_hex_to_docx_highlight_without_hash() {
+        assert_eq!(hex_to_docx_highlight("ffff00"), "yellow");
+        assert_eq!(hex_to_docx_highlight("ff0000"), "red");
+    }
+
+    #[test]
+    fn test_hex_to_docx_highlight_case_insensitive() {
+        assert_eq!(hex_to_docx_highlight("#FFFF00"), "yellow");
+        assert_eq!(hex_to_docx_highlight("#FF0000"), "red");
+    }
+
+    #[test]
+    fn test_hex_to_docx_highlight_orange() {
+        assert_eq!(hex_to_docx_highlight("#ffa500"), "darkYellow");
+    }
+
+    #[test]
+    fn test_hex_to_docx_highlight_gray() {
+        assert_eq!(hex_to_docx_highlight("#808080"), "darkGray");
+    }
+
+    #[test]
+    fn test_hex_to_docx_highlight_unknown() {
+        // Unknown colors should default to yellow
+        assert_eq!(hex_to_docx_highlight("#123456"), "yellow");
+        assert_eq!(hex_to_docx_highlight("#abcdef"), "yellow");
+    }
+
+    // ============================================================================
+    // extract_text_style Tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_text_style_empty_marks() {
+        let marks: Vec<TiptapMark> = vec![];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert!(font_size.is_none());
+        assert!(font_family.is_none());
+        assert!(color.is_none());
+    }
+
+    #[test]
+    fn test_extract_text_style_no_text_style_mark() {
+        let marks = vec![
+            TiptapMark {
+                mark_type: "bold".to_string(),
+                attrs: None,
+            },
+            TiptapMark {
+                mark_type: "italic".to_string(),
+                attrs: None,
+            },
+        ];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert!(font_size.is_none());
+        assert!(font_family.is_none());
+        assert!(color.is_none());
+    }
+
+    #[test]
+    fn test_extract_text_style_with_font_size() {
+        let marks = vec![TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: Some(serde_json::json!({
+                "fontSize": "16px"
+            })),
+        }];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert_eq!(font_size, Some("16px".to_string()));
+        assert!(font_family.is_none());
+        assert!(color.is_none());
+    }
+
+    #[test]
+    fn test_extract_text_style_with_font_family() {
+        let marks = vec![TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: Some(serde_json::json!({
+                "fontFamily": "Arial, sans-serif"
+            })),
+        }];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert!(font_size.is_none());
+        assert_eq!(font_family, Some("Arial, sans-serif".to_string()));
+        assert!(color.is_none());
+    }
+
+    #[test]
+    fn test_extract_text_style_with_color() {
+        let marks = vec![TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: Some(serde_json::json!({
+                "color": "#ff0000"
+            })),
+        }];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert!(font_size.is_none());
+        assert!(font_family.is_none());
+        assert_eq!(color, Some("#ff0000".to_string()));
+    }
+
+    #[test]
+    fn test_extract_text_style_with_all_attrs() {
+        let marks = vec![TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: Some(serde_json::json!({
+                "fontSize": "18px",
+                "fontFamily": "Georgia",
+                "color": "#0000ff"
+            })),
+        }];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert_eq!(font_size, Some("18px".to_string()));
+        assert_eq!(font_family, Some("Georgia".to_string()));
+        assert_eq!(color, Some("#0000ff".to_string()));
+    }
+
+    #[test]
+    fn test_extract_text_style_no_attrs() {
+        let marks = vec![TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: None,
+        }];
+        let (font_size, font_family, color) = extract_text_style(&marks);
+        assert!(font_size.is_none());
+        assert!(font_family.is_none());
+        assert!(color.is_none());
+    }
+
+    // ============================================================================
+    // TiptapDocument/Node/Mark Serialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_tiptap_document_serialization() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![],
+        };
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(json.contains("\"type\":\"doc\""));
+        assert!(json.contains("\"content\":[]"));
+    }
+
+    #[test]
+    fn test_tiptap_node_serialization() {
+        let node = TiptapNode {
+            node_type: "paragraph".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("\"type\":\"paragraph\""));
+    }
+
+    #[test]
+    fn test_tiptap_node_with_text() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Hello world".to_string()),
+            marks: vec![],
+            attrs: None,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_tiptap_node_with_attrs() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "level": 1 })),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("\"level\":1"));
+    }
+
+    #[test]
+    fn test_tiptap_mark_serialization() {
+        let mark = TiptapMark {
+            mark_type: "bold".to_string(),
+            attrs: None,
+        };
+        let json = serde_json::to_string(&mark).unwrap();
+        assert!(json.contains("\"type\":\"bold\""));
+    }
+
+    #[test]
+    fn test_tiptap_mark_with_attrs() {
+        let mark = TiptapMark {
+            mark_type: "textStyle".to_string(),
+            attrs: Some(serde_json::json!({ "color": "#ff0000" })),
+        };
+        let json = serde_json::to_string(&mark).unwrap();
+        assert!(json.contains("\"color\":\"#ff0000\""));
+    }
+
+    // ============================================================================
+    // Export Progress Tests
+    // ============================================================================
+
+    #[test]
+    fn test_export_progress_serialization() {
+        let progress = ExportProgress {
+            current: 5,
+            total: 10,
+            phase: "Processing".to_string(),
+        };
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("\"current\":5"));
+        assert!(json.contains("\"total\":10"));
+        assert!(json.contains("\"phase\":\"Processing\""));
+    }
+
+    // ============================================================================
+    // create_paragraph Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_paragraph_empty() {
+        let node = TiptapNode {
+            node_type: "paragraph".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let para = create_paragraph(&node);
+        // Paragraph should be created without errors
+        assert!(true); // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_create_paragraph_with_text() {
+        let node = TiptapNode {
+            node_type: "paragraph".to_string(),
+            content: vec![TiptapNode {
+                node_type: "text".to_string(),
+                content: vec![],
+                text: Some("Hello world".to_string()),
+                marks: vec![],
+                attrs: None,
+            }],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let _para = create_paragraph(&node);
+        // Verify it creates without error
+    }
+
+    #[test]
+    fn test_create_paragraph_with_alignment() {
+        let node = TiptapNode {
+            node_type: "paragraph".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "textAlign": "center" })),
+        };
+        let _para = create_paragraph(&node);
+        // Verify it creates without error
+    }
+
+    // ============================================================================
+    // create_heading Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_heading_h1() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![TiptapNode {
+                node_type: "text".to_string(),
+                content: vec![],
+                text: Some("Title".to_string()),
+                marks: vec![],
+                attrs: None,
+            }],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "level": 1 })),
+        };
+        let _para = create_heading(&node);
+        // Verify it creates without error
+    }
+
+    #[test]
+    fn test_create_heading_h2() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "level": 2 })),
+        };
+        let _para = create_heading(&node);
+    }
+
+    #[test]
+    fn test_create_heading_h3() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "level": 3 })),
+        };
+        let _para = create_heading(&node);
+    }
+
+    #[test]
+    fn test_create_heading_with_alignment() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({ "level": 1, "textAlign": "center" })),
+        };
+        let _para = create_heading(&node);
+    }
+
+    #[test]
+    fn test_create_heading_no_level_defaults_to_1() {
+        let node = TiptapNode {
+            node_type: "heading".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let _para = create_heading(&node);
+    }
+
+    // ============================================================================
+    // create_image_paragraph Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_image_paragraph_no_attrs() {
+        let node = TiptapNode {
+            node_type: "image".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let _para = create_image_paragraph(&node);
+    }
+
+    #[test]
+    fn test_create_image_paragraph_with_attrs() {
+        let node = TiptapNode {
+            node_type: "image".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({
+                "src": "midlight://img-123",
+                "width": "400px",
+                "height": "300px",
+                "align": "center-break"
+            })),
+        };
+        let _para = create_image_paragraph(&node);
+    }
+
+    #[test]
+    fn test_create_image_paragraph_left_align() {
+        let node = TiptapNode {
+            node_type: "image".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({
+                "align": "left"
+            })),
+        };
+        let _para = create_image_paragraph(&node);
+    }
+
+    #[test]
+    fn test_create_image_paragraph_right_align() {
+        let node = TiptapNode {
+            node_type: "image".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: Some(serde_json::json!({
+                "align": "right"
+            })),
+        };
+        let _para = create_image_paragraph(&node);
+    }
+
+    // ============================================================================
+    // create_horizontal_rule Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_horizontal_rule() {
+        let _para = create_horizontal_rule();
+        // Just verify it doesn't panic
+    }
+
+    // ============================================================================
+    // List Processing Tests
+    // ============================================================================
+
+    #[test]
+    fn test_process_bullet_list_empty() {
+        let node = TiptapNode {
+            node_type: "bulletList".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let paragraphs = process_bullet_list(&node, 0, 1);
+        assert!(paragraphs.is_empty());
+    }
+
+    #[test]
+    fn test_process_bullet_list_single_item() {
+        let node = TiptapNode {
+            node_type: "bulletList".to_string(),
+            content: vec![TiptapNode {
+                node_type: "listItem".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "paragraph".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "text".to_string(),
+                        content: vec![],
+                        text: Some("Item 1".to_string()),
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let paragraphs = process_bullet_list(&node, 0, 1);
+        assert_eq!(paragraphs.len(), 1);
+    }
+
+    #[test]
+    fn test_process_bullet_list_multiple_items() {
+        let node = TiptapNode {
+            node_type: "bulletList".to_string(),
+            content: vec![
+                TiptapNode {
+                    node_type: "listItem".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "paragraph".to_string(),
+                        content: vec![],
+                        text: None,
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                },
+                TiptapNode {
+                    node_type: "listItem".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "paragraph".to_string(),
+                        content: vec![],
+                        text: None,
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                },
+            ],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let paragraphs = process_bullet_list(&node, 0, 1);
+        assert_eq!(paragraphs.len(), 2);
+    }
+
+    #[test]
+    fn test_process_ordered_list_empty() {
+        let node = TiptapNode {
+            node_type: "orderedList".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let paragraphs = process_ordered_list(&node, 0, 2);
+        assert!(paragraphs.is_empty());
+    }
+
+    #[test]
+    fn test_process_ordered_list_single_item() {
+        let node = TiptapNode {
+            node_type: "orderedList".to_string(),
+            content: vec![TiptapNode {
+                node_type: "listItem".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "paragraph".to_string(),
+                    content: vec![],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let paragraphs = process_ordered_list(&node, 0, 2);
+        assert_eq!(paragraphs.len(), 1);
+    }
+
+    // ============================================================================
+    // create_text_run Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_text_run_plain() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Plain text".to_string()),
+            marks: vec![],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_bold() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Bold text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "bold".to_string(),
+                attrs: None,
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_italic() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Italic text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "italic".to_string(),
+                attrs: None,
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_strike() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Strike text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "strike".to_string(),
+                attrs: None,
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_underline() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Underlined text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "underline".to_string(),
+                attrs: None,
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_code() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("code".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "code".to_string(),
+                attrs: None,
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_with_color() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Colored text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "textStyle".to_string(),
+                attrs: Some(serde_json::json!({ "color": "#ff0000" })),
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_with_override_color() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Text".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "textStyle".to_string(),
+                attrs: Some(serde_json::json!({ "color": "#ff0000" })),
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, Some("000000"));
+    }
+
+    #[test]
+    fn test_create_text_run_with_highlight() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Highlighted".to_string()),
+            marks: vec![TiptapMark {
+                mark_type: "highlight".to_string(),
+                attrs: Some(serde_json::json!({ "color": "#ffff00" })),
+            }],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    #[test]
+    fn test_create_text_run_with_default_size() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Text".to_string()),
+            marks: vec![],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, Some(32), None);
+    }
+
+    #[test]
+    fn test_create_text_run_empty_text() {
+        let node = TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        };
+        let _run = create_text_run(&node, None, None);
+    }
+
+    // ============================================================================
+    // process_text_nodes Tests
+    // ============================================================================
+
+    #[test]
+    fn test_process_text_nodes_empty() {
+        let nodes: Vec<TiptapNode> = vec![];
+        let runs = process_text_nodes(&nodes, None, None);
+        assert_eq!(runs.len(), 1); // Empty placeholder
+    }
+
+    #[test]
+    fn test_process_text_nodes_single() {
+        let nodes = vec![TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Hello".to_string()),
+            marks: vec![],
+            attrs: None,
+        }];
+        let runs = process_text_nodes(&nodes, None, None);
+        assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn test_process_text_nodes_multiple() {
+        let nodes = vec![
+            TiptapNode {
+                node_type: "text".to_string(),
+                content: vec![],
+                text: Some("Hello ".to_string()),
+                marks: vec![],
+                attrs: None,
+            },
+            TiptapNode {
+                node_type: "text".to_string(),
+                content: vec![],
+                text: Some("world".to_string()),
+                marks: vec![TiptapMark {
+                    mark_type: "bold".to_string(),
+                    attrs: None,
+                }],
+                attrs: None,
+            },
+        ];
+        let runs = process_text_nodes(&nodes, None, None);
+        assert_eq!(runs.len(), 2);
+    }
+
+    #[test]
+    fn test_process_text_nodes_filters_non_text() {
+        let nodes = vec![
+            TiptapNode {
+                node_type: "text".to_string(),
+                content: vec![],
+                text: Some("Text".to_string()),
+                marks: vec![],
+                attrs: None,
+            },
+            TiptapNode {
+                node_type: "hardBreak".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            },
+        ];
+        let runs = process_text_nodes(&nodes, None, None);
+        assert_eq!(runs.len(), 1);
+    }
+
+    // ============================================================================
+    // tiptap_to_docx Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_tiptap_to_docx_empty_document() {
+        use std::cell::RefCell;
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![],
+        };
+        let progress_updates = RefCell::new(vec![]);
+        let result = tiptap_to_docx(&doc, |p| progress_updates.borrow_mut().push(p.clone()));
+        assert!(result.is_ok());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty());
+        // Progress should have been reported
+        assert!(!progress_updates.borrow().is_empty());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_single_paragraph() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "paragraph".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "text".to_string(),
+                    content: vec![],
+                    text: Some("Hello world".to_string()),
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_with_heading() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "heading".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "text".to_string(),
+                    content: vec![],
+                    text: Some("Title".to_string()),
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: Some(serde_json::json!({ "level": 1 })),
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_with_bullet_list() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "bulletList".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "listItem".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "paragraph".to_string(),
+                        content: vec![TiptapNode {
+                            node_type: "text".to_string(),
+                            content: vec![],
+                            text: Some("Item".to_string()),
+                            marks: vec![],
+                            attrs: None,
+                        }],
+                        text: None,
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_with_ordered_list() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "orderedList".to_string(),
+                content: vec![TiptapNode {
+                    node_type: "listItem".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "paragraph".to_string(),
+                        content: vec![],
+                        text: None,
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                }],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_with_image() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "image".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: Some(serde_json::json!({
+                    "src": "midlight://img-123"
+                })),
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_with_horizontal_rule() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "horizontalRule".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_unknown_node_type() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![TiptapNode {
+                node_type: "unknownType".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            }],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok()); // Should skip unknown types gracefully
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_progress_callback() {
+        use std::cell::RefCell;
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![
+                TiptapNode {
+                    node_type: "paragraph".to_string(),
+                    content: vec![],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                };
+                15 // 15 paragraphs
+            ],
+        };
+        let progress_updates = RefCell::new(vec![]);
+        let result = tiptap_to_docx(&doc, |p| progress_updates.borrow_mut().push(p.clone()));
+        assert!(result.is_ok());
+        // Should have multiple progress updates
+        assert!(progress_updates.borrow().len() >= 2);
+        // Last update should show complete
+        assert!(progress_updates.borrow().last().unwrap().phase.contains("Complete"));
+    }
+
+    #[test]
+    fn test_tiptap_to_docx_complex_document() {
+        let doc = TiptapDocument {
+            doc_type: "doc".to_string(),
+            content: vec![
+                TiptapNode {
+                    node_type: "heading".to_string(),
+                    content: vec![TiptapNode {
+                        node_type: "text".to_string(),
+                        content: vec![],
+                        text: Some("Document Title".to_string()),
+                        marks: vec![],
+                        attrs: None,
+                    }],
+                    text: None,
+                    marks: vec![],
+                    attrs: Some(serde_json::json!({ "level": 1 })),
+                },
+                TiptapNode {
+                    node_type: "paragraph".to_string(),
+                    content: vec![
+                        TiptapNode {
+                            node_type: "text".to_string(),
+                            content: vec![],
+                            text: Some("This is ".to_string()),
+                            marks: vec![],
+                            attrs: None,
+                        },
+                        TiptapNode {
+                            node_type: "text".to_string(),
+                            content: vec![],
+                            text: Some("bold".to_string()),
+                            marks: vec![TiptapMark {
+                                mark_type: "bold".to_string(),
+                                attrs: None,
+                            }],
+                            attrs: None,
+                        },
+                        TiptapNode {
+                            node_type: "text".to_string(),
+                            content: vec![],
+                            text: Some(" and ".to_string()),
+                            marks: vec![],
+                            attrs: None,
+                        },
+                        TiptapNode {
+                            node_type: "text".to_string(),
+                            content: vec![],
+                            text: Some("italic".to_string()),
+                            marks: vec![TiptapMark {
+                                mark_type: "italic".to_string(),
+                                attrs: None,
+                            }],
+                            attrs: None,
+                        },
+                    ],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                },
+                TiptapNode {
+                    node_type: "bulletList".to_string(),
+                    content: vec![
+                        TiptapNode {
+                            node_type: "listItem".to_string(),
+                            content: vec![TiptapNode {
+                                node_type: "paragraph".to_string(),
+                                content: vec![TiptapNode {
+                                    node_type: "text".to_string(),
+                                    content: vec![],
+                                    text: Some("First item".to_string()),
+                                    marks: vec![],
+                                    attrs: None,
+                                }],
+                                text: None,
+                                marks: vec![],
+                                attrs: None,
+                            }],
+                            text: None,
+                            marks: vec![],
+                            attrs: None,
+                        },
+                        TiptapNode {
+                            node_type: "listItem".to_string(),
+                            content: vec![TiptapNode {
+                                node_type: "paragraph".to_string(),
+                                content: vec![TiptapNode {
+                                    node_type: "text".to_string(),
+                                    content: vec![],
+                                    text: Some("Second item".to_string()),
+                                    marks: vec![],
+                                    attrs: None,
+                                }],
+                                text: None,
+                                marks: vec![],
+                                attrs: None,
+                            }],
+                            text: None,
+                            marks: vec![],
+                            attrs: None,
+                        },
+                    ],
+                    text: None,
+                    marks: vec![],
+                    attrs: None,
+                },
+            ],
+        };
+        let result = tiptap_to_docx(&doc, |_| {});
+        assert!(result.is_ok());
+        let bytes = result.unwrap();
+        // DOCX files should be ZIP archives, check for ZIP magic bytes
+        assert!(bytes.len() > 4);
+        assert_eq!(&bytes[0..4], &[0x50, 0x4b, 0x03, 0x04]); // PK\x03\x04
+    }
+
+    // ============================================================================
+    // Numbering Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_bullet_numbering() {
+        let numbering = create_bullet_numbering();
+        // Just verify it creates without error
+        let _ = numbering;
+    }
+
+    #[test]
+    fn test_create_ordered_numbering() {
+        let numbering = create_ordered_numbering();
+        // Just verify it creates without error
+        let _ = numbering;
+    }
+
+    // ============================================================================
+    // Font Fallback Map Tests
+    // ============================================================================
+
+    #[test]
+    fn test_get_font_fallback_map() {
+        let map = get_font_fallback_map();
+        assert_eq!(map.get("Inter"), Some(&"Arial"));
+        assert_eq!(map.get("Merriweather"), Some(&"Georgia"));
+        assert_eq!(map.get("JetBrains Mono"), Some(&"Courier New"));
     }
 }

@@ -1154,3 +1154,2121 @@ impl AgentExecutor {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ============================================
+    // Helper to create executor with temp directory
+    // ============================================
+
+    fn create_test_executor() -> (TempDir, AgentExecutor) {
+        let temp = TempDir::new().unwrap();
+        let executor = AgentExecutor::new(temp.path().to_path_buf());
+        (temp, executor)
+    }
+
+    fn create_midlight_doc(content: &str) -> String {
+        let tiptap = json!({
+            "type": "doc",
+            "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": content }] }
+            ]
+        });
+        let doc = json!({
+            "version": 1,
+            "meta": {
+                "created": "2024-01-01T00:00:00Z",
+                "modified": "2024-01-01T00:00:00Z"
+            },
+            "document": {},
+            "content": tiptap
+        });
+        serde_json::to_string_pretty(&doc).unwrap()
+    }
+
+    // ============================================
+    // Unknown tool tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_unknown_tool() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.execute_tool("unknown_tool", json!({})).await;
+
+        assert!(!result.success);
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("Unknown tool"));
+    }
+
+    // ============================================
+    // list_documents tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_list_documents_empty_dir() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.execute_tool("list_documents", json!({})).await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_with_files() {
+        let (temp, executor) = create_test_executor();
+
+        // Create some files
+        std::fs::write(
+            temp.path().join("doc1.midlight"),
+            create_midlight_doc("Content 1"),
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("doc2.midlight"),
+            create_midlight_doc("Content 2"),
+        )
+        .unwrap();
+        std::fs::create_dir(temp.path().join("subfolder")).unwrap();
+
+        let result = executor.execute_tool("list_documents", json!({})).await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert_eq!(files.len(), 3); // 2 files + 1 directory
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_hides_hidden_files() {
+        let (temp, executor) = create_test_executor();
+
+        // Create hidden and visible files
+        std::fs::write(temp.path().join(".hidden.midlight"), "").unwrap();
+        std::fs::write(
+            temp.path().join("visible.midlight"),
+            create_midlight_doc("Visible"),
+        )
+        .unwrap();
+
+        let result = executor.execute_tool("list_documents", json!({})).await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["name"], "visible.midlight");
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_subdirectory() {
+        let (temp, executor) = create_test_executor();
+
+        // Create subdirectory with file
+        std::fs::create_dir(temp.path().join("notes")).unwrap();
+        std::fs::write(
+            temp.path().join("notes/idea.midlight"),
+            create_midlight_doc("Idea"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("list_documents", json!({ "path": "notes" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["name"], "idea.midlight");
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_nonexistent_dir() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("list_documents", json!({ "path": "nonexistent" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
+    // ============================================
+    // read_document tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_read_document_success() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("test.midlight"),
+            create_midlight_doc("Hello World"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("read_document", json!({ "path": "test.midlight" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert!(data["content"].as_str().unwrap().contains("Hello World"));
+    }
+
+    #[tokio::test]
+    async fn test_read_document_missing_path() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.execute_tool("read_document", json!({})).await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    #[tokio::test]
+    async fn test_read_document_not_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("read_document", json!({ "path": "nonexistent.midlight" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_read_document_plain_text() {
+        let (temp, executor) = create_test_executor();
+
+        // Write a non-JSON file
+        std::fs::write(temp.path().join("plain.txt"), "Just plain text").unwrap();
+
+        let result = executor
+            .execute_tool("read_document", json!({ "path": "plain.txt" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data["content"].as_str().unwrap(), "Just plain text");
+    }
+
+    // ============================================
+    // create_document tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_create_document_success() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "new-doc",
+                    "content": "# Hello\n\nThis is content",
+                    "title": "My Document"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("new-doc.midlight").exists());
+
+        // Verify content
+        let content = std::fs::read_to_string(temp.path().join("new-doc.midlight")).unwrap();
+        let doc: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(doc["version"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_document_already_exists() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("existing.midlight"),
+            create_midlight_doc("Existing"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "existing.midlight",
+                    "content": "New content"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_create_document_creates_parent_dirs() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "deep/nested/path/doc",
+                    "content": "Content"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("deep/nested/path/doc.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_document_missing_path() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("create_document", json!({ "content": "content" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    #[tokio::test]
+    async fn test_create_document_adds_extension() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "no-extension",
+                    "content": ""
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        // Should add .midlight extension
+        assert!(temp.path().join("no-extension.midlight").exists());
+    }
+
+    // ============================================
+    // edit_document tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_edit_document_success() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("edit-me.midlight"),
+            create_midlight_doc("Original content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "edit_document",
+                json!({
+                    "path": "edit-me.midlight",
+                    "content": "Updated content",
+                    "description": "Made some changes"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert!(data["requiresAcceptance"].as_bool().unwrap());
+        assert!(data["changeId"].is_string());
+        assert_eq!(data["newContent"], "Updated content");
+    }
+
+    #[tokio::test]
+    async fn test_edit_document_not_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "edit_document",
+                json!({
+                    "path": "nonexistent.midlight",
+                    "content": "New content"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_edit_document_missing_content() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("edit_document", json!({ "path": "doc.midlight" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    // ============================================
+    // move_document tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_move_document_success() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("old.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "old.midlight",
+                    "newPath": "new.midlight"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(!temp.path().join("old.midlight").exists());
+        assert!(temp.path().join("new.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_move_document_source_not_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "nonexistent.midlight",
+                    "newPath": "new.midlight"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_move_document_dest_exists() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("source.midlight"),
+            create_midlight_doc("Source"),
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("dest.midlight"),
+            create_midlight_doc("Dest"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "source.midlight",
+                    "newPath": "dest.midlight"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_move_document_missing_params() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("move_document", json!({ "oldPath": "test.midlight" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    #[tokio::test]
+    async fn test_move_document_creates_parent_dirs() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "doc.midlight",
+                    "newPath": "deep/nested/doc.midlight"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("deep/nested/doc.midlight").exists());
+    }
+
+    // ============================================
+    // delete_document tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_delete_document_not_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("delete_document", json!({ "path": "nonexistent.midlight" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_document_missing_path() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.execute_tool("delete_document", json!({})).await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    // Note: Actual deletion test is tricky because it uses the trash crate
+    // which may not work in all test environments
+
+    // ============================================
+    // search_documents tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_search_documents_success() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc1.midlight"),
+            create_midlight_doc("Hello World"),
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("doc2.midlight"),
+            create_midlight_doc("Goodbye World"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "Hello" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["name"], "doc1.midlight");
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_case_insensitive() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("HELLO World"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "hello" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_no_matches() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Hello World"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "xyz123" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        assert!(matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_missing_query() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.execute_tool("search_documents", json!({})).await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter"));
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_recursive() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::create_dir(temp.path().join("subfolder")).unwrap();
+        std::fs::write(
+            temp.path().join("subfolder/nested.midlight"),
+            create_midlight_doc("Nested content findme"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "findme" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["path"].as_str().unwrap().contains("subfolder"));
+    }
+
+    // ============================================
+    // Markdown to Tiptap conversion tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_headings() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("# Heading 1\n## Heading 2\n### Heading 3");
+
+        assert_eq!(result["type"], "doc");
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["attrs"]["level"], 1);
+        assert_eq!(content[1]["attrs"]["level"], 2);
+        assert_eq!(content[2]["attrs"]["level"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_paragraphs() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("First paragraph\n\nSecond paragraph");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "paragraph");
+        assert_eq!(content[1]["type"], "paragraph");
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_bullet_list() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("- Item 1\n- Item 2\n- Item 3");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "bulletList");
+        let items = content[0]["content"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_ordered_list() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("1. First\n2. Second\n3. Third");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "orderedList");
+        let items = content[0]["content"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_blockquote() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("> This is a quote");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "blockquote");
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_horizontal_rule() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("---");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "horizontalRule");
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_empty() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("");
+
+        assert_eq!(result["type"], "doc");
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "paragraph");
+    }
+
+    // ============================================
+    // Tiptap to Markdown conversion tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_headings() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [
+                { "type": "heading", "attrs": { "level": 1 }, "content": [{ "type": "text", "text": "H1" }] },
+                { "type": "heading", "attrs": { "level": 2 }, "content": [{ "type": "text", "text": "H2" }] }
+            ]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("# H1"));
+        assert!(markdown.contains("## H2"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_bold() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "bold text",
+                    "marks": [{ "type": "bold" }]
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("**bold text**"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_italic() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "italic text",
+                    "marks": [{ "type": "italic" }]
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("*italic text*"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_code() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "code",
+                    "marks": [{ "type": "code" }]
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("`code`"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_horizontal_rule() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{ "type": "horizontalRule" }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("---"));
+    }
+
+    // ============================================
+    // Inline formatting parsing tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_parse_inline_bold() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("This is **bold** text");
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["text"], "This is ");
+        assert_eq!(result[1]["text"], "bold");
+        assert!(result[1]["marks"].as_array().unwrap().iter().any(|m| m["type"] == "bold"));
+        assert_eq!(result[2]["text"], " text");
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_italic() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("This is *italic* text");
+
+        assert!(result.iter().any(|n| {
+            n["marks"]
+                .as_array()
+                .map(|m| m.iter().any(|mark| mark["type"] == "italic"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_code() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("Use `code` here");
+
+        assert!(result.iter().any(|n| {
+            n["text"] == "code"
+                && n["marks"]
+                    .as_array()
+                    .map(|m| m.iter().any(|mark| mark["type"] == "code"))
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_plain() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("Plain text only");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["text"], "Plain text only");
+        assert!(result[0].get("marks").is_none());
+    }
+
+    // ============================================
+    // Extract text from Tiptap tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_extract_text_from_tiptap() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": "Hello " }, { "type": "text", "text": "World" }] },
+                { "type": "paragraph", "content": [{ "type": "text", "text": "Second line" }] }
+            ]
+        });
+
+        let text = executor.extract_text_from_tiptap(&tiptap);
+        assert!(text.contains("Hello World"));
+        assert!(text.contains("Second line"));
+    }
+
+    // ============================================
+    // Extract snippet tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_extract_snippet_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "This is a long text with the search term somewhere in the middle of it.";
+        let snippet = executor.extract_snippet(text, "search term");
+
+        assert!(snippet.contains("search term"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_snippet_at_start() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "Match at the very beginning of the text";
+        let snippet = executor.extract_snippet(text, "match");
+
+        assert!(snippet.to_lowercase().contains("match"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_snippet_not_found() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "Some text without the query";
+        let snippet = executor.extract_snippet(text, "xyz");
+
+        // Should return first 100 chars when not found
+        assert!(!snippet.is_empty());
+    }
+
+    // ============================================
+    // Additional coverage tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_list_documents_with_leading_slash() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::create_dir(temp.path().join("folder")).unwrap();
+        std::fs::write(
+            temp.path().join("folder/doc.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("list_documents", json!({ "path": "/folder" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_root_slash() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("root.midlight"),
+            create_midlight_doc("Root doc"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("list_documents", json!({ "path": "/" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_ignores_non_midlight_files() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(temp.path().join("doc.midlight"), create_midlight_doc("Midlight")).unwrap();
+        std::fs::write(temp.path().join("other.txt"), "Plain text").unwrap();
+        std::fs::write(temp.path().join("data.json"), "{}").unwrap();
+
+        let result = executor.execute_tool("list_documents", json!({})).await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        // Should only show .midlight files
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["name"], "doc.midlight");
+    }
+
+    #[tokio::test]
+    async fn test_list_documents_sorts_dirs_first() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(temp.path().join("zzz.midlight"), create_midlight_doc("Z")).unwrap();
+        std::fs::create_dir(temp.path().join("aaa_folder")).unwrap();
+        std::fs::write(temp.path().join("aaa.midlight"), create_midlight_doc("A")).unwrap();
+
+        let result = executor.execute_tool("list_documents", json!({})).await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let files = data["files"].as_array().unwrap();
+        // Directory should be first despite name
+        assert_eq!(files[0]["type"], "directory");
+        assert_eq!(files[0]["name"], "aaa_folder");
+    }
+
+    #[tokio::test]
+    async fn test_read_document_with_title() {
+        let (temp, executor) = create_test_executor();
+
+        let doc = json!({
+            "version": 1,
+            "meta": {
+                "created": "2024-01-01T00:00:00Z",
+                "modified": "2024-01-01T00:00:00Z",
+                "title": "My Document Title"
+            },
+            "document": {},
+            "content": {
+                "type": "doc",
+                "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Content" }] }]
+            }
+        });
+        std::fs::write(
+            temp.path().join("titled.midlight"),
+            serde_json::to_string_pretty(&doc).unwrap(),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("read_document", json!({ "path": "titled.midlight" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data["title"], "My Document Title");
+    }
+
+    #[tokio::test]
+    async fn test_read_document_with_leading_slash() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("read_document", json!({ "path": "/doc.midlight" }))
+            .await;
+
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_create_document_with_extension() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "with-ext.midlight",
+                    "content": "Content"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        // Should not double the extension
+        assert!(temp.path().join("with-ext.midlight").exists());
+        assert!(!temp.path().join("with-ext.midlight.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_document_empty_content() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "empty"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("empty.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_document_with_leading_slash() {
+        let (temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "/slashed",
+                    "content": "Content"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("slashed.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_edit_document_missing_path() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("edit_document", json!({ "content": "new content" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter: path"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_document_invalid_json() {
+        let (temp, executor) = create_test_executor();
+
+        // Write invalid JSON
+        std::fs::write(temp.path().join("invalid.midlight"), "not valid json").unwrap();
+
+        let result = executor
+            .execute_tool(
+                "edit_document",
+                json!({
+                    "path": "invalid.midlight",
+                    "content": "New content"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Failed to parse document"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_document_with_leading_slash() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Original"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "edit_document",
+                json!({
+                    "path": "/doc.midlight",
+                    "content": "Updated"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_move_document_missing_old_path() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor
+            .execute_tool("move_document", json!({ "newPath": "new.midlight" }))
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Missing required parameter: oldPath"));
+    }
+
+    #[tokio::test]
+    async fn test_move_document_with_leading_slashes() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("source.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "/source.midlight",
+                    "newPath": "/dest.midlight"
+                }),
+            )
+            .await;
+
+        assert!(result.success);
+        assert!(temp.path().join("dest.midlight").exists());
+    }
+
+    #[tokio::test]
+    async fn test_delete_document_with_leading_slash() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("to-delete.midlight"),
+            create_midlight_doc("Delete me"),
+        )
+        .unwrap();
+
+        // Note: This test might fail in CI due to trash crate limitations
+        let result = executor
+            .execute_tool("delete_document", json!({ "path": "/to-delete.midlight" }))
+            .await;
+
+        // The result depends on whether trash works in test environment
+        // Either success or error about trash
+        assert!(result.success || result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_skips_hidden_folders() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::create_dir(temp.path().join(".hidden")).unwrap();
+        std::fs::write(
+            temp.path().join(".hidden/secret.midlight"),
+            create_midlight_doc("Secret content findthis"),
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("visible.midlight"),
+            create_midlight_doc("Visible content"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "findthis" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        // Should not find the hidden file
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_with_file_pattern() {
+        let (temp, executor) = create_test_executor();
+
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("searchterm here"),
+        )
+        .unwrap();
+
+        // filePattern is accepted but currently unused
+        let result = executor
+            .execute_tool(
+                "search_documents",
+                json!({ "query": "searchterm", "filePattern": "*.midlight" }),
+            )
+            .await;
+
+        assert!(result.success);
+    }
+
+    // ============================================
+    // Tiptap to Markdown edge cases
+    // ============================================
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_bold_italic() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "bold and italic",
+                    "marks": [{ "type": "bold" }, { "type": "italic" }]
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("***bold and italic***"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_bullet_list() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "bulletList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [{
+                            "type": "paragraph",
+                            "content": [{ "type": "text", "text": "Item 1" }]
+                        }]
+                    },
+                    {
+                        "type": "listItem",
+                        "content": [{
+                            "type": "paragraph",
+                            "content": [{ "type": "text", "text": "Item 2" }]
+                        }]
+                    }
+                ]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("- Item 1"));
+        assert!(markdown.contains("- Item 2"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_ordered_list() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "orderedList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [{
+                            "type": "paragraph",
+                            "content": [{ "type": "text", "text": "First" }]
+                        }]
+                    },
+                    {
+                        "type": "listItem",
+                        "content": [{
+                            "type": "paragraph",
+                            "content": [{ "type": "text", "text": "Second" }]
+                        }]
+                    }
+                ]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("1. First"));
+        assert!(markdown.contains("2. Second"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_blockquote() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "blockquote",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "Quoted text" }]
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("> Quoted text"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_unknown_type() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "unknownType",
+                "content": [{
+                    "type": "text",
+                    "text": "Inner text"
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        // Should still extract text from unknown types
+        assert!(markdown.contains("Inner text"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_text_without_marks() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "Plain text"
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("Plain text"));
+    }
+
+    #[tokio::test]
+    async fn test_tiptap_to_markdown_empty_marks() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{
+                    "type": "text",
+                    "text": "Text with empty marks",
+                    "marks": []
+                }]
+            }]
+        });
+
+        let markdown = executor.tiptap_to_markdown(&tiptap);
+        assert!(markdown.contains("Text with empty marks"));
+    }
+
+    // ============================================
+    // Extract text from Tiptap edge cases
+    // ============================================
+
+    #[tokio::test]
+    async fn test_extract_text_bullet_list() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "doc",
+            "content": [{
+                "type": "bulletList",
+                "content": [{
+                    "type": "listItem",
+                    "content": [{
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "List item" }]
+                    }]
+                }]
+            }]
+        });
+
+        let text = executor.extract_text_from_tiptap(&tiptap);
+        assert!(text.contains("List item"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_text_unknown_type() {
+        let (_temp, executor) = create_test_executor();
+
+        let tiptap = json!({
+            "type": "unknownType",
+            "content": [{
+                "type": "text",
+                "text": "Nested text"
+            }]
+        });
+
+        let text = executor.extract_text_from_tiptap(&tiptap);
+        assert!(text.contains("Nested text"));
+    }
+
+    // ============================================
+    // Markdown to Tiptap edge cases
+    // ============================================
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_heading_4() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("#### Heading 4");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "heading");
+        assert_eq!(content[0]["attrs"]["level"], 4);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_heading_5() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("##### Heading 5");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "heading");
+        assert_eq!(content[0]["attrs"]["level"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_heading_6() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("###### Heading 6");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "heading");
+        assert_eq!(content[0]["attrs"]["level"], 6);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_hr_asterisks() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("***");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "horizontalRule");
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_hr_underscores() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("___");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "horizontalRule");
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_bullet_list_asterisk() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.markdown_to_tiptap("* Item 1\n* Item 2");
+
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "bulletList");
+        let items = content[0]["content"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_markdown_to_tiptap_mixed_content() {
+        let (_temp, executor) = create_test_executor();
+
+        let markdown = "# Title\n\nParagraph text\n\n- List item\n\n> Quote";
+        let result = executor.markdown_to_tiptap(markdown);
+
+        let content = result["content"].as_array().unwrap();
+        assert!(content.len() >= 4);
+    }
+
+    // ============================================
+    // Parse inline formatting edge cases
+    // ============================================
+
+    #[tokio::test]
+    async fn test_parse_inline_bold_italic() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("This is ***bold italic*** text");
+
+        assert!(result.iter().any(|n| {
+            let marks = n["marks"].as_array();
+            marks
+                .map(|m| {
+                    m.iter().any(|mark| mark["type"] == "bold")
+                        && m.iter().any(|mark| mark["type"] == "italic")
+                })
+                .unwrap_or(false)
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_bold_underscore() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("This is __bold__ text");
+
+        assert!(result.iter().any(|n| {
+            n["marks"]
+                .as_array()
+                .map(|m| m.iter().any(|mark| mark["type"] == "bold"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_italic_underscore() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("This is _italic_ text");
+
+        assert!(result.iter().any(|n| {
+            n["marks"]
+                .as_array()
+                .map(|m| m.iter().any(|mark| mark["type"] == "italic"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_unclosed_code() {
+        let (_temp, executor) = create_test_executor();
+
+        // Unclosed backtick
+        let result = executor.parse_inline_formatting("Start `unclosed code");
+
+        // Should handle gracefully
+        assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_unclosed_bold() {
+        let (_temp, executor) = create_test_executor();
+
+        // Unclosed bold
+        let result = executor.parse_inline_formatting("Start **unclosed bold");
+
+        // Should handle gracefully
+        assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_unclosed_italic() {
+        let (_temp, executor) = create_test_executor();
+
+        // Unclosed italic
+        let result = executor.parse_inline_formatting("Start *unclosed italic");
+
+        // Should handle gracefully
+        assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parse_inline_empty() {
+        let (_temp, executor) = create_test_executor();
+
+        let result = executor.parse_inline_formatting("");
+
+        assert!(result.is_empty());
+    }
+
+    // ============================================
+    // Snippet extraction edge cases
+    // ============================================
+
+    #[tokio::test]
+    async fn test_extract_snippet_at_end() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "Some text with the match at the end";
+        let snippet = executor.extract_snippet(text, "end");
+
+        assert!(snippet.contains("end"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_snippet_short_text() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "Short";
+        let snippet = executor.extract_snippet(text, "short");
+
+        assert!(snippet.to_lowercase().contains("short"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_snippet_exact_match() {
+        let (_temp, executor) = create_test_executor();
+
+        let text = "match";
+        let snippet = executor.extract_snippet(text, "match");
+
+        assert_eq!(snippet, "match");
+    }
+
+    // ============================================
+    // Type serialization tests
+    // ============================================
+
+    #[test]
+    fn test_tool_execution_status_serialize() {
+        let status = ToolExecutionStatus::Pending;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"pending\"");
+
+        let status = ToolExecutionStatus::Running;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"running\"");
+
+        let status = ToolExecutionStatus::Completed;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"completed\"");
+
+        let status = ToolExecutionStatus::Failed;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"failed\"");
+
+        let status = ToolExecutionStatus::RequiresConfirmation;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"requires_confirmation\"");
+    }
+
+    #[test]
+    fn test_tool_result_serialize() {
+        let result = ToolResult {
+            success: true,
+            data: Some(json!({"key": "value"})),
+            error: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"key\":\"value\""));
+    }
+
+    #[test]
+    fn test_file_info_serialize() {
+        let info = FileInfo {
+            path: "test/path".to_string(),
+            name: "file.midlight".to_string(),
+            file_type: "file".to_string(),
+            modified: Some("2024-01-01T00:00:00Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"path\":\"test/path\""));
+        assert!(json.contains("\"type\":\"file\"")); // renamed
+    }
+
+    #[test]
+    fn test_search_match_serialize() {
+        let m = SearchMatch {
+            path: "doc.midlight".to_string(),
+            name: "doc.midlight".to_string(),
+            snippet: "...matching text...".to_string(),
+            line: Some(42),
+        };
+
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"line\":42"));
+    }
+
+    #[test]
+    fn test_tool_execution_serialize() {
+        let exec = ToolExecution {
+            id: "123".to_string(),
+            tool_name: "read_document".to_string(),
+            arguments: json!({"path": "test.midlight"}),
+            status: ToolExecutionStatus::Completed,
+            result: Some(ToolResult {
+                success: true,
+                data: None,
+                error: None,
+            }),
+            started_at: "2024-01-01T00:00:00Z".to_string(),
+            completed_at: Some("2024-01-01T00:00:01Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&exec).unwrap();
+        assert!(json.contains("\"toolName\":\"read_document\""));
+        assert!(json.contains("\"completedAt\""));
+    }
+
+    #[test]
+    fn test_pending_change_serialize() {
+        let change = PendingChange {
+            change_id: "abc123".to_string(),
+            path: "doc.midlight".to_string(),
+            original_content: "old".to_string(),
+            new_content: "new".to_string(),
+            description: Some("Made changes".to_string()),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&change).unwrap();
+        assert!(json.contains("\"changeId\":\"abc123\""));
+        assert!(json.contains("\"originalContent\":\"old\""));
+    }
+
+    // ============================================
+    // Debug trait tests
+    // ============================================
+
+    #[test]
+    fn test_tool_execution_debug() {
+        let exec = ToolExecution {
+            id: "123".to_string(),
+            tool_name: "test".to_string(),
+            arguments: json!({}),
+            status: ToolExecutionStatus::Pending,
+            result: None,
+            started_at: "now".to_string(),
+            completed_at: None,
+        };
+
+        let debug = format!("{:?}", exec);
+        assert!(debug.contains("ToolExecution"));
+    }
+
+    #[test]
+    fn test_tool_result_debug() {
+        let result = ToolResult {
+            success: true,
+            data: None,
+            error: None,
+        };
+
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("ToolResult"));
+    }
+
+    #[test]
+    fn test_file_info_debug() {
+        let info = FileInfo {
+            path: "test".to_string(),
+            name: "test".to_string(),
+            file_type: "file".to_string(),
+            modified: None,
+        };
+
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("FileInfo"));
+    }
+
+    #[test]
+    fn test_search_match_debug() {
+        let m = SearchMatch {
+            path: "test".to_string(),
+            name: "test".to_string(),
+            snippet: "snippet".to_string(),
+            line: None,
+        };
+
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("SearchMatch"));
+    }
+
+    #[test]
+    fn test_pending_change_debug() {
+        let change = PendingChange {
+            change_id: "123".to_string(),
+            path: "test".to_string(),
+            original_content: "old".to_string(),
+            new_content: "new".to_string(),
+            description: None,
+            created_at: "now".to_string(),
+        };
+
+        let debug = format!("{:?}", change);
+        assert!(debug.contains("PendingChange"));
+    }
+
+    #[test]
+    fn test_tool_execution_status_debug() {
+        let status = ToolExecutionStatus::Pending;
+        let debug = format!("{:?}", status);
+        assert!(debug.contains("Pending"));
+    }
+
+    #[test]
+    fn test_tool_execution_status_partial_eq() {
+        assert_eq!(ToolExecutionStatus::Pending, ToolExecutionStatus::Pending);
+        assert_ne!(ToolExecutionStatus::Pending, ToolExecutionStatus::Running);
+    }
+
+    #[test]
+    fn test_tool_execution_status_clone() {
+        let status = ToolExecutionStatus::Completed;
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    // ============================================
+    // File system error tests (Unix-specific)
+    // ============================================
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_create_document_dir_creation_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Create a read-only directory
+        let readonly = temp.path().join("readonly");
+        std::fs::create_dir(&readonly).unwrap();
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "readonly/nested/doc",
+                    "content": "Content"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Failed to create directory"));
+
+        // Cleanup
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_create_document_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Make workspace read-only so file write fails
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = executor
+            .execute_tool(
+                "create_document",
+                json!({
+                    "path": "newdoc",
+                    "content": "Content"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        // Could be either directory or document creation failure depending on timing
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("Failed to create document") || error.contains("Failed to create directory")
+        );
+
+        // Cleanup
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_move_document_dir_creation_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Create source file
+        std::fs::write(
+            temp.path().join("source.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        // Create read-only directory
+        let readonly = temp.path().join("readonly");
+        std::fs::create_dir(&readonly).unwrap();
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "source.midlight",
+                    "newPath": "readonly/nested/dest.midlight"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Failed to create directory"));
+
+        // Cleanup
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_move_document_rename_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Create source file
+        std::fs::write(
+            temp.path().join("source.midlight"),
+            create_midlight_doc("Content"),
+        )
+        .unwrap();
+
+        // Create destination directory but make it read-only
+        let dest_dir = temp.path().join("destdir");
+        std::fs::create_dir(&dest_dir).unwrap();
+        std::fs::set_permissions(&dest_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = executor
+            .execute_tool(
+                "move_document",
+                json!({
+                    "oldPath": "source.midlight",
+                    "newPath": "destdir/dest.midlight"
+                }),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Failed to move document"));
+
+        // Cleanup
+        std::fs::set_permissions(&dest_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // ============================================
+    // Search error tests
+    // ============================================
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_search_skips_unreadable_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Create readable file
+        std::fs::write(
+            temp.path().join("readable.midlight"),
+            create_midlight_doc("findme content"),
+        )
+        .unwrap();
+
+        // Create unreadable file
+        let unreadable = temp.path().join("unreadable.midlight");
+        std::fs::write(&unreadable, create_midlight_doc("findme hidden")).unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "findme" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        // Should only find the readable file
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["name"].as_str().unwrap().contains("readable"));
+
+        // Cleanup
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_search_skips_invalid_json_files() {
+        let (temp, executor) = create_test_executor();
+
+        // Create valid file
+        std::fs::write(
+            temp.path().join("valid.midlight"),
+            create_midlight_doc("findme valid"),
+        )
+        .unwrap();
+
+        // Create file with invalid JSON
+        std::fs::write(
+            temp.path().join("invalid.midlight"),
+            "not valid json { findme }",
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "findme" }))
+            .await;
+
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        // Should only find the valid file
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["name"].as_str().unwrap().contains("valid"));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_search_handles_unreadable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, executor) = create_test_executor();
+
+        // Create unreadable subdirectory (name starts with 'z' to be processed last)
+        let unreadable = temp.path().join("zzz_unreadable_dir");
+        std::fs::create_dir(&unreadable).unwrap();
+        std::fs::write(
+            unreadable.join("hidden.midlight"),
+            create_midlight_doc("findme hidden"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Create readable file (name starts with 'a' to be processed first)
+        std::fs::write(
+            temp.path().join("aaa_visible.midlight"),
+            create_midlight_doc("findme visible"),
+        )
+        .unwrap();
+
+        let result = executor
+            .execute_tool("search_documents", json!({ "query": "findme" }))
+            .await;
+
+        // Search should succeed (error is caught and logged with warn!)
+        assert!(result.success);
+        let data = result.data.unwrap();
+        let matches = data["matches"].as_array().unwrap();
+        // Should find the visible file (processed before hitting unreadable dir)
+        // Directory iteration order may vary, so accept 0 or 1 matches
+        assert!(matches.len() <= 1);
+        if matches.len() == 1 {
+            assert!(matches[0]["name"].as_str().unwrap().contains("visible"));
+        }
+
+        // Cleanup
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}

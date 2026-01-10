@@ -290,8 +290,14 @@ pub fn analyze_obsidian_vault(vault_path: &Path) -> Result<ImportAnalysis, Impor
 
         let path = entry.path();
 
-        // Skip .obsidian and hidden folders
-        if path
+        // Get relative path first
+        let rel_path = match path.strip_prefix(vault_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // Skip .obsidian and hidden folders/files (check relative path, not full path)
+        if rel_path
             .components()
             .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
         {
@@ -299,17 +305,13 @@ pub fn analyze_obsidian_vault(vault_path: &Path) -> Result<ImportAnalysis, Impor
         }
 
         if entry.file_type().is_dir() {
-            let rel_path = path.strip_prefix(vault_path).unwrap_or(path);
             if !rel_path.as_os_str().is_empty() {
                 folder_set.insert(rel_path.to_path_buf());
             }
             continue;
         }
 
-        let relative_path = match path.strip_prefix(vault_path) {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
+        let relative_path = rel_path.to_string_lossy().to_string();
 
         let file_name = entry.file_name().to_string_lossy().to_string();
         let metadata = match entry.metadata() {
@@ -664,8 +666,9 @@ pub fn convert_wiki_links(
 
 /// Convert Obsidian callouts to blockquotes
 pub fn convert_callouts(content: &str) -> String {
+    // Use [ \t]* instead of \s* to only match horizontal whitespace, not newlines
     let callout_pattern =
-        Regex::new(r"(?m)^>\s*\[!(\w+)\](?:\s*(.*))?$").expect("Invalid callout regex");
+        Regex::new(r"(?m)^>\s*\[!(\w+)\](?:[ \t]*(.*))?$").expect("Invalid callout regex");
 
     let mut result = content.to_string();
     let mut offset: i64 = 0;
@@ -1257,19 +1260,397 @@ pub fn import_notion_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    // ============================================================================
+    // Enum Serialization Tests
+    // ============================================================================
 
     #[test]
-    fn test_detect_source_type() {
-        // Would need temp directories with actual structures to test properly
+    fn test_import_source_type_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ImportSourceType::Obsidian).unwrap(),
+            "\"obsidian\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportSourceType::Notion).unwrap(),
+            "\"notion\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportSourceType::Generic).unwrap(),
+            "\"generic\""
+        );
     }
 
     #[test]
-    fn test_strip_notion_uuid() {
+    fn test_import_file_type_serialization() {
         assert_eq!(
-            strip_notion_uuid("Page Title abc123def456789012345678901234.md"),
+            serde_json::to_string(&ImportFileType::Markdown).unwrap(),
+            "\"markdown\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportFileType::Attachment).unwrap(),
+            "\"attachment\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportFileType::Other).unwrap(),
+            "\"other\""
+        );
+    }
+
+    #[test]
+    fn test_import_phase_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ImportPhase::Analyzing).unwrap(),
+            "\"analyzing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportPhase::Converting).unwrap(),
+            "\"converting\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportPhase::Copying).unwrap(),
+            "\"copying\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportPhase::Finalizing).unwrap(),
+            "\"finalizing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImportPhase::Complete).unwrap(),
+            "\"complete\""
+        );
+    }
+
+    #[test]
+    fn test_untitled_handling_serialization() {
+        assert_eq!(
+            serde_json::to_string(&UntitledHandling::Number).unwrap(),
+            "\"number\""
+        );
+        assert_eq!(
+            serde_json::to_string(&UntitledHandling::Keep).unwrap(),
+            "\"keep\""
+        );
+        assert_eq!(
+            serde_json::to_string(&UntitledHandling::Prompt).unwrap(),
+            "\"prompt\""
+        );
+    }
+
+    // ============================================================================
+    // Default Options Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_options_default() {
+        let options = ImportOptions::default();
+        assert!(options.convert_wiki_links);
+        assert!(options.import_front_matter);
+        assert!(options.convert_callouts);
+        assert!(options.copy_attachments);
+        assert!(options.preserve_folder_structure);
+        assert!(options.skip_empty_pages);
+        assert!(options.create_midlight_files);
+    }
+
+    #[test]
+    fn test_notion_import_options_default() {
+        let options = NotionImportOptions::default();
+        assert!(options.remove_uuids);
+        assert!(options.convert_csv_to_tables);
+        assert_eq!(options.untitled_handling, UntitledHandling::Number);
+        // Check base options
+        assert!(options.base.convert_wiki_links);
+        assert!(options.base.copy_attachments);
+    }
+
+    // ============================================================================
+    // Struct Serialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_file_info_serialization() {
+        let info = ImportFileInfo {
+            source_path: "/path/to/file.md".to_string(),
+            relative_path: "file.md".to_string(),
+            name: "file.md".to_string(),
+            file_type: ImportFileType::Markdown,
+            size: 1024,
+            has_wiki_links: true,
+            has_front_matter: false,
+            has_callouts: true,
+            has_dataview: false,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"sourcePath\""));
+        assert!(json.contains("\"relativePath\""));
+        assert!(json.contains("\"hasWikiLinks\":true"));
+    }
+
+    #[test]
+    fn test_access_warning_serialization() {
+        let warning = AccessWarning {
+            path: "/path/to/file".to_string(),
+            message: "Permission denied".to_string(),
+        };
+        let json = serde_json::to_string(&warning).unwrap();
+        assert!(json.contains("Permission denied"));
+    }
+
+    #[test]
+    fn test_import_error_info_serialization() {
+        let error = ImportErrorInfo {
+            file: "test.md".to_string(),
+            message: "Could not read file".to_string(),
+        };
+        let json = serde_json::to_string(&error).unwrap();
+        assert!(json.contains("\"file\":\"test.md\""));
+        assert!(json.contains("Could not read file"));
+    }
+
+    #[test]
+    fn test_import_warning_info_serialization() {
+        let warning = ImportWarningInfo {
+            file: "test.md".to_string(),
+            message: "Broken link detected".to_string(),
+        };
+        let json = serde_json::to_string(&warning).unwrap();
+        assert!(json.contains("Broken link"));
+    }
+
+    #[test]
+    fn test_import_progress_serialization() {
+        let progress = ImportProgress {
+            phase: ImportPhase::Converting,
+            current: 5,
+            total: 10,
+            current_file: "test.md".to_string(),
+            errors: vec![],
+            warnings: vec![],
+        };
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("\"phase\":\"converting\""));
+        assert!(json.contains("\"current\":5"));
+        assert!(json.contains("\"total\":10"));
+        assert!(json.contains("\"currentFile\":\"test.md\""));
+    }
+
+    #[test]
+    fn test_import_result_serialization() {
+        let result = ImportResult {
+            success: true,
+            files_imported: 10,
+            links_converted: 5,
+            attachments_copied: 3,
+            errors: vec![],
+            warnings: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"filesImported\":10"));
+        assert!(json.contains("\"linksConverted\":5"));
+        assert!(json.contains("\"attachmentsCopied\":3"));
+    }
+
+    #[test]
+    fn test_import_analysis_serialization() {
+        let analysis = ImportAnalysis {
+            source_type: ImportSourceType::Obsidian,
+            source_path: "/vault".to_string(),
+            total_files: 100,
+            markdown_files: 80,
+            attachments: 20,
+            folders: 10,
+            wiki_links: 50,
+            files_with_wiki_links: 30,
+            front_matter: 25,
+            callouts: 5,
+            dataview_blocks: 2,
+            csv_databases: 0,
+            untitled_pages: vec![],
+            empty_pages: vec![],
+            files_to_import: vec![],
+            access_warnings: vec![],
+        };
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("\"sourceType\":\"obsidian\""));
+        assert!(json.contains("\"totalFiles\":100"));
+        assert!(json.contains("\"markdownFiles\":80"));
+    }
+
+    // ============================================================================
+    // CancellationToken Tests
+    // ============================================================================
+
+    #[test]
+    fn test_cancellation_token_new() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancellation_token_cancel() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancellation_token_default() {
+        let token = CancellationToken::default();
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancellation_token_thread_safe() {
+        use std::thread;
+
+        let token = CancellationToken::new();
+        let token_clone = Arc::clone(&token);
+
+        let handle = thread::spawn(move || {
+            token_clone.cancel();
+        });
+
+        handle.join().unwrap();
+        assert!(token.is_cancelled());
+    }
+
+    // ============================================================================
+    // build_file_map Tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_file_map_empty() {
+        let files: Vec<ImportFileInfo> = vec![];
+        let map = build_file_map(&files);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_build_file_map_single_file() {
+        let files = vec![ImportFileInfo {
+            source_path: "/vault/test.md".to_string(),
+            relative_path: "test.md".to_string(),
+            name: "test.md".to_string(),
+            file_type: ImportFileType::Markdown,
+            size: 100,
+            has_wiki_links: false,
+            has_front_matter: false,
+            has_callouts: false,
+            has_dataview: false,
+        }];
+        let map = build_file_map(&files);
+
+        assert_eq!(map.get("test"), Some(&"test.md".to_string()));
+        assert_eq!(map.get("test.md"), Some(&"test.md".to_string()));
+    }
+
+    #[test]
+    fn test_build_file_map_multiple_files() {
+        let files = vec![
+            ImportFileInfo {
+                source_path: "/vault/notes/note1.md".to_string(),
+                relative_path: "notes/note1.md".to_string(),
+                name: "note1.md".to_string(),
+                file_type: ImportFileType::Markdown,
+                size: 100,
+                has_wiki_links: false,
+                has_front_matter: false,
+                has_callouts: false,
+                has_dataview: false,
+            },
+            ImportFileInfo {
+                source_path: "/vault/note2.md".to_string(),
+                relative_path: "note2.md".to_string(),
+                name: "note2.md".to_string(),
+                file_type: ImportFileType::Markdown,
+                size: 100,
+                has_wiki_links: false,
+                has_front_matter: false,
+                has_callouts: false,
+                has_dataview: false,
+            },
+        ];
+        let map = build_file_map(&files);
+
+        assert_eq!(map.get("note1"), Some(&"notes/note1.md".to_string()));
+        assert_eq!(map.get("note2"), Some(&"note2.md".to_string()));
+    }
+
+    #[test]
+    fn test_build_file_map_ignores_non_markdown() {
+        let files = vec![
+            ImportFileInfo {
+                source_path: "/vault/note.md".to_string(),
+                relative_path: "note.md".to_string(),
+                name: "note.md".to_string(),
+                file_type: ImportFileType::Markdown,
+                size: 100,
+                has_wiki_links: false,
+                has_front_matter: false,
+                has_callouts: false,
+                has_dataview: false,
+            },
+            ImportFileInfo {
+                source_path: "/vault/image.png".to_string(),
+                relative_path: "image.png".to_string(),
+                name: "image.png".to_string(),
+                file_type: ImportFileType::Attachment,
+                size: 5000,
+                has_wiki_links: false,
+                has_front_matter: false,
+                has_callouts: false,
+                has_dataview: false,
+            },
+        ];
+        let map = build_file_map(&files);
+
+        assert!(map.get("note").is_some());
+        assert!(map.get("image").is_none());
+    }
+
+    #[test]
+    fn test_build_file_map_case_insensitive() {
+        let files = vec![ImportFileInfo {
+            source_path: "/vault/MyNote.md".to_string(),
+            relative_path: "MyNote.md".to_string(),
+            name: "MyNote.md".to_string(),
+            file_type: ImportFileType::Markdown,
+            size: 100,
+            has_wiki_links: false,
+            has_front_matter: false,
+            has_callouts: false,
+            has_dataview: false,
+        }];
+        let map = build_file_map(&files);
+
+        // Keys are lowercased
+        assert_eq!(map.get("mynote"), Some(&"MyNote.md".to_string()));
+        assert_eq!(map.get("mynote.md"), Some(&"MyNote.md".to_string()));
+    }
+
+    // ============================================================================
+    // strip_notion_uuid Tests
+    // ============================================================================
+
+    #[test]
+    fn test_strip_notion_uuid_with_uuid() {
+        assert_eq!(
+            strip_notion_uuid("Page Title abc123def45678901234567890123456.md"),
             "Page Title.md"
         );
+    }
+
+    #[test]
+    fn test_strip_notion_uuid_no_uuid() {
         assert_eq!(strip_notion_uuid("No UUID.md"), "No UUID.md");
+    }
+
+    #[test]
+    fn test_strip_notion_uuid_different_extension() {
         assert_eq!(
             strip_notion_uuid("Test 12345678901234567890123456789012.txt"),
             "Test.txt"
@@ -1277,7 +1658,37 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_wiki_links() {
+    fn test_strip_notion_uuid_partial_uuid() {
+        // UUID must be exactly 32 hex chars
+        assert_eq!(
+            strip_notion_uuid("Short 1234567890123456.md"),
+            "Short 1234567890123456.md"
+        );
+    }
+
+    #[test]
+    fn test_strip_notion_uuid_no_extension() {
+        // Without extension, pattern won't match
+        assert_eq!(
+            strip_notion_uuid("File 12345678901234567890123456789012"),
+            "File 12345678901234567890123456789012"
+        );
+    }
+
+    #[test]
+    fn test_strip_notion_uuid_preserves_spaces() {
+        assert_eq!(
+            strip_notion_uuid("My Cool Page 12345678901234567890123456789012.md"),
+            "My Cool Page.md"
+        );
+    }
+
+    // ============================================================================
+    // convert_wiki_links Tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_wiki_links_basic() {
         let mut file_map = HashMap::new();
         file_map.insert("other note".to_string(), "other note.md".to_string());
         file_map.insert("target".to_string(), "folder/target.md".to_string());
@@ -1305,14 +1716,135 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_callouts() {
+    fn test_convert_wiki_links_with_anchor() {
+        let mut file_map = HashMap::new();
+        file_map.insert("page".to_string(), "page.md".to_string());
+
+        let content = "Link to [[Page#heading]].";
+        let (converted, count, _) = convert_wiki_links(content, &file_map, "test.md");
+
+        assert_eq!(count, 1);
+        assert!(converted.contains("[Page](page.md#heading)"));
+    }
+
+    #[test]
+    fn test_convert_wiki_links_with_anchor_and_alias() {
+        let mut file_map = HashMap::new();
+        file_map.insert("page".to_string(), "page.md".to_string());
+
+        let content = "Link to [[Page#section|my link]].";
+        let (converted, count, _) = convert_wiki_links(content, &file_map, "test.md");
+
+        assert_eq!(count, 1);
+        assert!(converted.contains("[my link](page.md#section)"));
+    }
+
+    #[test]
+    fn test_convert_wiki_links_multiple_on_same_line() {
+        let mut file_map = HashMap::new();
+        file_map.insert("note1".to_string(), "note1.md".to_string());
+        file_map.insert("note2".to_string(), "note2.md".to_string());
+
+        let content = "See [[Note1]] and also [[Note2]].";
+        let (converted, count, _) = convert_wiki_links(content, &file_map, "test.md");
+
+        assert_eq!(count, 2);
+        assert!(converted.contains("[Note1](note1.md)"));
+        assert!(converted.contains("[Note2](note2.md)"));
+    }
+
+    #[test]
+    fn test_convert_wiki_links_empty_content() {
+        let file_map = HashMap::new();
+        let (converted, count, broken) = convert_wiki_links("", &file_map, "test.md");
+
+        assert_eq!(count, 0);
+        assert_eq!(converted, "");
+        assert!(broken.is_empty());
+    }
+
+    #[test]
+    fn test_convert_wiki_links_no_links() {
+        let file_map = HashMap::new();
+        let content = "Just some regular text.";
+        let (converted, count, broken) = convert_wiki_links(content, &file_map, "test.md");
+
+        assert_eq!(count, 0);
+        assert_eq!(converted, content);
+        assert!(broken.is_empty());
+    }
+
+    #[test]
+    fn test_convert_wiki_links_resolves_with_md_extension() {
+        let mut file_map = HashMap::new();
+        file_map.insert("note.md".to_string(), "note.md".to_string());
+
+        let content = "Link to [[note]].";
+        let (converted, count, _) = convert_wiki_links(content, &file_map, "test.md");
+
+        assert_eq!(count, 1);
+        assert!(converted.contains("[note](note.md)"));
+    }
+
+    // ============================================================================
+    // convert_callouts Tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_callouts_with_title() {
         let content = "> [!note] Important info\n> Content here";
         let converted = convert_callouts(content);
         assert!(converted.contains("> **NOTE:** Important info"));
     }
 
     #[test]
-    fn test_remove_dataview() {
+    fn test_convert_callouts_without_title() {
+        let content = "> [!warning]\n> Be careful";
+        let converted = convert_callouts(content);
+        assert!(converted.contains("> **WARNING**"));
+        // Verify the next line is preserved
+        assert!(converted.contains("> Be careful"));
+    }
+
+    #[test]
+    fn test_convert_callouts_different_types() {
+        let types = vec!["note", "warning", "tip", "important", "caution", "info"];
+        for callout_type in types {
+            let content = format!("> [!{}] Title", callout_type);
+            let converted = convert_callouts(&content);
+            assert!(converted.contains(&format!("> **{}:** Title", callout_type.to_uppercase())));
+        }
+    }
+
+    #[test]
+    fn test_convert_callouts_preserves_content() {
+        let content = "> [!note] Title\n> Line 1\n> Line 2";
+        let converted = convert_callouts(content);
+        assert!(converted.contains("> Line 1"));
+        assert!(converted.contains("> Line 2"));
+    }
+
+    #[test]
+    fn test_convert_callouts_multiple() {
+        let content = "> [!note] First\n\nText\n\n> [!warning] Second";
+        let converted = convert_callouts(content);
+        assert!(converted.contains("> **NOTE:** First"));
+        assert!(converted.contains("> **WARNING:** Second"));
+    }
+
+    #[test]
+    fn test_convert_callouts_no_callouts() {
+        let content = "> Regular blockquote\n> More text";
+        let converted = convert_callouts(content);
+        assert_eq!(converted, content);
+    }
+
+    // ============================================================================
+    // remove_dataview Tests
+    // ============================================================================
+
+    #[test]
+    fn test_remove_dataview_block() {
         let content = "# Title\n\n```dataview\nTABLE file.name\n```\n\nMore content";
         let result = remove_dataview(content);
         assert!(!result.contains("dataview"));
@@ -1321,7 +1853,46 @@ mod tests {
     }
 
     #[test]
-    fn test_csv_to_markdown_table() {
+    fn test_remove_dataview_js_block() {
+        let content = "# Title\n\n```dataviewjs\nconst pages = dv.pages();\n```\n\nText";
+        let result = remove_dataview(content);
+        assert!(!result.contains("dataviewjs"));
+        assert!(!result.contains("dv.pages"));
+    }
+
+    #[test]
+    fn test_remove_dataview_inline() {
+        let content = "The value is `=this.field` inline.";
+        let result = remove_dataview(content);
+        assert!(!result.contains("`=this.field`"));
+        assert!(result.contains("The value is"));
+        assert!(result.contains("inline."));
+    }
+
+    #[test]
+    fn test_remove_dataview_multiple() {
+        let content = "```dataview\nTABLE\n```\n\nText\n\n```dataview\nLIST\n```";
+        let result = remove_dataview(content);
+        assert!(!result.contains("TABLE"));
+        assert!(!result.contains("LIST"));
+        assert!(result.contains("Text"));
+    }
+
+    #[test]
+    fn test_remove_dataview_preserves_other_code_blocks() {
+        let content = "```javascript\nconst x = 1;\n```\n\n```dataview\nTABLE\n```";
+        let result = remove_dataview(content);
+        assert!(result.contains("```javascript"));
+        assert!(result.contains("const x = 1"));
+        assert!(!result.contains("TABLE"));
+    }
+
+    // ============================================================================
+    // csv_to_markdown_table Tests
+    // ============================================================================
+
+    #[test]
+    fn test_csv_to_markdown_table_basic() {
         let csv = "Name,Age,City\nAlice,30,NYC\nBob,25,LA";
         let table = csv_to_markdown_table(csv).unwrap();
 
@@ -1329,5 +1900,1261 @@ mod tests {
         assert!(table.contains("| --- | --- | --- |"));
         assert!(table.contains("| Alice | 30 | NYC |"));
         assert!(table.contains("| Bob | 25 | LA |"));
+    }
+
+    #[test]
+    fn test_csv_to_markdown_table_single_column() {
+        let csv = "Name\nAlice\nBob";
+        let table = csv_to_markdown_table(csv).unwrap();
+
+        assert!(table.contains("| Name |"));
+        assert!(table.contains("| --- |"));
+        assert!(table.contains("| Alice |"));
+    }
+
+    #[test]
+    fn test_csv_to_markdown_table_empty() {
+        let csv = "";
+        let table = csv_to_markdown_table(csv).unwrap();
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn test_csv_to_markdown_table_headers_only() {
+        let csv = "Col1,Col2,Col3";
+        let table = csv_to_markdown_table(csv).unwrap();
+        assert!(table.contains("| Col1 | Col2 | Col3 |"));
+        assert!(table.contains("| --- | --- | --- |"));
+    }
+
+    #[test]
+    fn test_csv_to_markdown_table_special_characters() {
+        // Pipe characters should be escaped/sanitized
+        let csv = "Name,Description\nTest,A | B";
+        let table = csv_to_markdown_table(csv).unwrap();
+        // sanitize_csv_cell should handle pipes
+        assert!(table.contains("| Name | Description |"));
+    }
+
+    #[test]
+    fn test_csv_to_markdown_table_quoted_values() {
+        let csv = "Name,Quote\nAlice,\"Hello, World\"";
+        let table = csv_to_markdown_table(csv).unwrap();
+        assert!(table.contains("Hello, World"));
+    }
+
+    // ============================================================================
+    // detect_source_type Tests
+    // ============================================================================
+
+    #[test]
+    fn test_detect_source_type_not_found() {
+        let result = detect_source_type(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ImportError::FileNotFound(_)));
+    }
+
+    #[test]
+    fn test_detect_source_type_not_directory() {
+        let temp = TempDir::new().unwrap();
+        let file_path = temp.path().join("file.txt");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let result = detect_source_type(&file_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ImportError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn test_detect_source_type_obsidian() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+
+        let result = detect_source_type(temp.path());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ImportSourceType::Obsidian);
+    }
+
+    #[test]
+    fn test_detect_source_type_notion() {
+        let temp = TempDir::new().unwrap();
+        // Create a file with UUID pattern
+        let filename = "Page abc123def45678901234567890123456.md";
+        std::fs::write(temp.path().join(filename), "content").unwrap();
+
+        let result = detect_source_type(temp.path());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ImportSourceType::Notion);
+    }
+
+    #[test]
+    fn test_detect_source_type_generic() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("regular.md"), "content").unwrap();
+
+        let result = detect_source_type(temp.path());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ImportSourceType::Generic);
+    }
+
+    // ============================================================================
+    // analyze_obsidian_vault Tests
+    // ============================================================================
+
+    #[test]
+    fn test_analyze_obsidian_vault_not_found() {
+        let result = analyze_obsidian_vault(Path::new("/nonexistent/vault"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_empty() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        assert!(result.is_ok());
+
+        let analysis = result.unwrap();
+        assert_eq!(analysis.source_type, ImportSourceType::Obsidian);
+        assert_eq!(analysis.total_files, 0);
+        assert_eq!(analysis.markdown_files, 0);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_with_markdown() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(temp.path().join("note.md"), "# Hello\nWorld").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        assert!(result.is_ok());
+
+        let analysis = result.unwrap();
+        assert_eq!(analysis.total_files, 1);
+        assert_eq!(analysis.markdown_files, 1);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_with_wiki_links() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(temp.path().join("note.md"), "Link to [[other note]]").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.wiki_links, 1);
+        assert_eq!(analysis.files_with_wiki_links, 1);
+        assert!(analysis.files_to_import[0].has_wiki_links);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_with_callouts() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(temp.path().join("note.md"), "> [!note] Title\n> Content").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.callouts, 1);
+        assert!(analysis.files_to_import[0].has_callouts);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_with_dataview() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(
+            temp.path().join("note.md"),
+            "# Note\n```dataview\nTABLE file.name\n```",
+        )
+        .unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.dataview_blocks, 1);
+        assert!(analysis.files_to_import[0].has_dataview);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_with_front_matter() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(
+            temp.path().join("note.md"),
+            "---\ntitle: Test\ntags: [a, b]\n---\n# Content",
+        )
+        .unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.front_matter, 1);
+        assert!(analysis.files_to_import[0].has_front_matter);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_skips_hidden() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::create_dir(temp.path().join(".hidden")).unwrap();
+        std::fs::write(temp.path().join(".hidden/secret.md"), "secret").unwrap();
+        std::fs::write(temp.path().join("visible.md"), "visible").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.total_files, 1);
+        assert_eq!(
+            analysis.files_to_import[0].name,
+            "visible.md".to_string()
+        );
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_counts_attachments() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(temp.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+        std::fs::write(temp.path().join("doc.pdf"), "PDF content").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.attachments, 2);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_empty_pages() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::write(temp.path().join("empty.md"), "").unwrap();
+        std::fs::write(temp.path().join("whitespace.md"), "   \n\n   ").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.empty_pages.len(), 2);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_untitled_pages() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        // Put untitled files in different locations to avoid case-insensitive filesystem issues on macOS
+        std::fs::write(temp.path().join("Untitled.md"), "content").unwrap();
+        std::fs::create_dir(temp.path().join("subfolder")).unwrap();
+        std::fs::write(temp.path().join("subfolder/untitled.md"), "content").unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.untitled_pages.len(), 2);
+    }
+
+    #[test]
+    fn test_analyze_obsidian_vault_folder_count() {
+        let temp = TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join(".obsidian")).unwrap();
+        std::fs::create_dir_all(temp.path().join("folder1/subfolder")).unwrap();
+        std::fs::create_dir(temp.path().join("folder2")).unwrap();
+
+        let result = analyze_obsidian_vault(temp.path());
+        let analysis = result.unwrap();
+
+        assert!(analysis.folders >= 2); // At least folder1, folder1/subfolder, folder2
+    }
+
+    // ============================================================================
+    // analyze_notion_export Tests
+    // ============================================================================
+
+    #[test]
+    fn test_analyze_notion_export_not_found() {
+        let result = analyze_notion_export(Path::new("/nonexistent/export"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analyze_notion_export_empty() {
+        let temp = TempDir::new().unwrap();
+
+        let result = analyze_notion_export(temp.path());
+        assert!(result.is_ok());
+
+        let analysis = result.unwrap();
+        assert_eq!(analysis.source_type, ImportSourceType::Notion);
+        assert_eq!(analysis.total_files, 0);
+    }
+
+    #[test]
+    fn test_analyze_notion_export_with_csv() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("database.csv"), "Col1,Col2\na,b").unwrap();
+
+        let result = analyze_notion_export(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.csv_databases, 1);
+    }
+
+    #[test]
+    fn test_analyze_notion_export_untitled() {
+        let temp = TempDir::new().unwrap();
+        let filename = "Untitled 12345678901234567890123456789012.md";
+        std::fs::write(temp.path().join(filename), "content").unwrap();
+
+        let result = analyze_notion_export(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.untitled_pages.len(), 1);
+    }
+
+    #[test]
+    fn test_analyze_notion_export_empty_file() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("empty.md"), "").unwrap();
+
+        let result = analyze_notion_export(temp.path());
+        let analysis = result.unwrap();
+
+        assert_eq!(analysis.empty_pages.len(), 1);
+    }
+
+    // ============================================================================
+    // Import Execution Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_obsidian_vault_empty() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert!(import_result.success);
+        assert_eq!(import_result.files_imported, 0);
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_simple_file() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("note.md"), "# Hello World").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert!(import_result.success);
+        assert_eq!(import_result.files_imported, 1);
+
+        // Check file was created
+        assert!(dest.path().join("note.md").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_with_wiki_link_conversion() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("main.md"), "Link to [[other]]").unwrap();
+        std::fs::write(source.path().join("other.md"), "Other page").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.convert_wiki_links = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        let import_result = result.unwrap();
+
+        assert!(import_result.links_converted > 0);
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_with_cancellation() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+        let token = CancellationToken::new();
+        token.cancel(); // Cancel immediately
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, Some(token));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ImportError::Cancelled));
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_skip_empty_pages() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("empty.md"), "").unwrap();
+        std::fs::write(source.path().join("nonempty.md"), "content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.skip_empty_pages = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        let import_result = result.unwrap();
+
+        assert_eq!(import_result.files_imported, 1);
+        assert!(!dest.path().join("empty.md").exists());
+        assert!(dest.path().join("nonempty.md").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_preserves_folder_structure() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::create_dir(source.path().join("subfolder")).unwrap();
+        std::fs::write(source.path().join("subfolder/note.md"), "content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.preserve_folder_structure = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+        assert!(dest.path().join("subfolder/note.md").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_flattens_structure() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::create_dir(source.path().join("subfolder")).unwrap();
+        std::fs::write(source.path().join("subfolder/note.md"), "content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.preserve_folder_structure = false;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+        assert!(dest.path().join("note.md").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_with_attachment() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.copy_attachments = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        let import_result = result.unwrap();
+
+        assert_eq!(import_result.attachments_copied, 1);
+        assert!(dest.path().join("image.png").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_skip_attachments() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.copy_attachments = false;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        let import_result = result.unwrap();
+
+        assert_eq!(import_result.attachments_copied, 0);
+        assert!(!dest.path().join("image.png").exists());
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_converts_callouts() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(
+            source.path().join("note.md"),
+            "> [!note] Important\n> Content",
+        )
+        .unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.convert_callouts = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(dest.path().join("note.md")).unwrap();
+        assert!(content.contains("> **NOTE:**"));
+    }
+
+    #[test]
+    fn test_import_obsidian_vault_removes_dataview() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(
+            source.path().join("note.md"),
+            "# Title\n```dataview\nTABLE\n```\nEnd",
+        )
+        .unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(dest.path().join("note.md")).unwrap();
+        assert!(!content.contains("dataview"));
+        assert!(content.contains("# Title"));
+    }
+
+    // ============================================================================
+    // Notion Import Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_notion_export_empty() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let options = NotionImportOptions::default();
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert!(import_result.success);
+    }
+
+    #[test]
+    fn test_import_notion_export_removes_uuids() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let filename = "My Page 12345678901234567890123456789012.md";
+        std::fs::write(source.path().join(filename), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.remove_uuids = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        // Should be renamed without UUID
+        assert!(dest.path().join("My Page.md").exists());
+    }
+
+    #[test]
+    fn test_import_notion_export_keeps_uuids() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let filename = "My Page 12345678901234567890123456789012.md";
+        std::fs::write(source.path().join(filename), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.remove_uuids = false;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        // Should keep original name
+        assert!(dest.path().join(filename).exists());
+    }
+
+    #[test]
+    fn test_import_notion_export_converts_csv() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::write(source.path().join("data.csv"), "Name,Value\nA,1").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.convert_csv_to_tables = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+
+        // CSV should be converted to markdown
+        assert!(dest.path().join("data.md").exists());
+        let content = std::fs::read_to_string(dest.path().join("data.md")).unwrap();
+        assert!(content.contains("| Name | Value |"));
+    }
+
+    #[test]
+    fn test_import_notion_export_with_cancellation() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let options = NotionImportOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, Some(token));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ImportError::Cancelled));
+    }
+
+    // ============================================================================
+    // Progress Callback Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_with_progress_callback() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        // Create multiple files to trigger progress
+        for i in 0..5 {
+            std::fs::write(source.path().join(format!("note{}.md", i)), "content").unwrap();
+        }
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        // We can't easily test the callback because it requires Send + Sync
+        // and RefCell isn't Sync. Just verify import works with None callback.
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None);
+        assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // Source Detection Edge Cases
+    // ============================================================================
+
+    #[test]
+    fn test_detect_source_type_generic_with_multiple_files() {
+        // Folder with no .obsidian and no UUID-named files
+        let source = TempDir::new().unwrap();
+        std::fs::write(source.path().join("regular_file.md"), "# Test").unwrap();
+        std::fs::write(source.path().join("another.txt"), "text").unwrap();
+        std::fs::write(source.path().join("data.csv"), "a,b").unwrap();
+
+        let result = detect_source_type(source.path()).unwrap();
+        assert!(matches!(result, ImportSourceType::Generic));
+    }
+
+    #[test]
+    fn test_detect_source_type_hidden_obsidian_in_subdir() {
+        // .obsidian deeper than max_depth(2) shouldn't be detected
+        let source = TempDir::new().unwrap();
+        std::fs::create_dir_all(source.path().join("a/b/c/.obsidian")).unwrap();
+
+        let result = detect_source_type(source.path()).unwrap();
+        // Should not detect because .obsidian is too deep
+        assert!(matches!(result, ImportSourceType::Generic));
+    }
+
+    // ============================================================================
+    // Obsidian Analysis Error Paths
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_obsidian_analysis_unreadable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+
+        // Create an unreadable directory
+        let unreadable = source.path().join("unreadable");
+        std::fs::create_dir(&unreadable).unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        // Restore permissions for cleanup
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Should have an access warning for the unreadable directory
+        assert!(!analysis.access_warnings.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_obsidian_analysis_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        // Create a readable note
+        std::fs::write(source.path().join("readable.md"), "[[link]]").unwrap();
+
+        // Create an unreadable markdown file
+        let unreadable = source.path().join("unreadable.md");
+        std::fs::write(&unreadable, "content").unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        // Restore permissions for cleanup
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Should have recorded an access warning for the unreadable file
+        assert!(
+            analysis
+                .access_warnings
+                .iter()
+                .any(|w| w.path.contains("unreadable.md"))
+        );
+    }
+
+    #[test]
+    fn test_obsidian_analysis_other_file_type() {
+        // Test that non-markdown, non-attachment files are counted as "Other"
+        let source = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        std::fs::write(source.path().join("config.json"), "{}").unwrap();
+        std::fs::write(source.path().join("script.py"), "print('hi')").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        // Should have 3 total files (note.md, config.json, script.py)
+        assert_eq!(analysis.total_files, 3);
+        // Only one markdown file
+        assert_eq!(analysis.markdown_files, 1);
+        // The other files are "Other" type
+        let other_count = analysis
+            .files_to_import
+            .iter()
+            .filter(|f| matches!(f.file_type, ImportFileType::Other))
+            .count();
+        assert_eq!(other_count, 2);
+    }
+
+    #[test]
+    fn test_obsidian_analysis_attachments() {
+        let source = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        std::fs::write(source.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+        std::fs::write(source.path().join("doc.pdf"), b"PDF content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        assert_eq!(analysis.attachments, 2);
+    }
+
+    // ============================================================================
+    // Notion Analysis Error Paths
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_notion_analysis_unreadable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        // Create a notion-style file
+        std::fs::write(
+            source.path().join("note 12345678901234567890123456789012.md"),
+            "content",
+        )
+        .unwrap();
+
+        // Create an unreadable directory
+        let unreadable = source.path().join("unreadable");
+        std::fs::create_dir(&unreadable).unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        // Restore permissions for cleanup
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Should have an access warning
+        assert!(!analysis.access_warnings.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_notion_analysis_metadata_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+
+        // Create files that can be listed but not stat'd (difficult to simulate)
+        // Instead we test the folder counting path
+        let subdir = source.path().join("subdir");
+        std::fs::create_dir(&subdir).unwrap();
+        std::fs::write(subdir.join("note.md"), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        // Should count the folder
+        assert_eq!(analysis.folders, 1);
+    }
+
+    #[test]
+    fn test_notion_analysis_attachments() {
+        let source = TempDir::new().unwrap();
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        std::fs::write(source.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+        std::fs::write(source.path().join("doc.pdf"), b"PDF content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        assert_eq!(analysis.attachments, 2);
+        assert_eq!(analysis.markdown_files, 1);
+    }
+
+    #[test]
+    fn test_notion_analysis_empty_page() {
+        let source = TempDir::new().unwrap();
+        // Create an empty file
+        std::fs::write(source.path().join("empty.md"), "").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        assert_eq!(analysis.empty_pages.len(), 1);
+        assert!(analysis.empty_pages[0].contains("empty.md"));
+    }
+
+    // ============================================================================
+    // Obsidian Import Error Paths
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_obsidian_import_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        // Create a file that will be in the analysis but unreadable during import
+        let file_path = source.path().join("note.md");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        // Make file unreadable after analysis
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let options = ImportOptions::default();
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Restore permissions for cleanup
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Should have an error for the unreadable file
+        assert!(!result.errors.is_empty());
+        assert!(result.errors[0].message.contains("Could not read file"));
+    }
+
+    #[test]
+    fn test_obsidian_import_broken_wiki_links() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        // Create a file with wiki link to non-existent file
+        std::fs::write(
+            source.path().join("note.md"),
+            "Check out [[nonexistent page]]!",
+        )
+        .unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.convert_wiki_links = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Should have a warning for the broken link
+        assert!(!result.warnings.is_empty());
+        assert!(result.warnings[0].message.contains("Broken link"));
+    }
+
+    #[test]
+    fn test_obsidian_import_skips_other_file_types() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        std::fs::write(source.path().join("config.json"), "{}").unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Only the markdown file should be imported
+        assert_eq!(result.files_imported, 1);
+        assert!(dest.path().join("note.md").exists());
+        assert!(!dest.path().join("config.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_obsidian_import_attachment_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        let img_path = source.path().join("image.png");
+        std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+
+        // Make attachment unreadable
+        std::fs::set_permissions(&img_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut options = ImportOptions::default();
+        options.copy_attachments = true;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Restore permissions
+        std::fs::set_permissions(&img_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Should have an error for the attachment
+        assert!(!result.errors.is_empty());
+    }
+
+    // ============================================================================
+    // Notion Import Error Paths
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_notion_import_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        let file_path = source.path().join("note.md");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        // Make file unreadable after analysis
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let options = NotionImportOptions::default();
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Restore permissions
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(!result.errors.is_empty());
+        assert!(result.errors[0].message.contains("Could not read file"));
+    }
+
+    #[test]
+    fn test_notion_import_with_folder_structure() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Create nested structure
+        let subdir = source.path().join("Projects");
+        std::fs::create_dir(&subdir).unwrap();
+        std::fs::write(
+            subdir.join("note 12345678901234567890123456789012.md"),
+            "content",
+        )
+        .unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.base.preserve_folder_structure = true;
+        options.remove_uuids = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        assert!(result.success);
+        // File should be at Projects/note.md (UUID removed, folder preserved)
+        assert!(dest.path().join("Projects/note.md").exists());
+    }
+
+    #[test]
+    fn test_notion_import_skips_empty_pages() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Create empty file
+        std::fs::write(source.path().join("empty.md"), "").unwrap();
+        std::fs::write(source.path().join("nonempty.md"), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.base.skip_empty_pages = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Only non-empty file should be imported
+        assert_eq!(result.files_imported, 1);
+        assert!(!dest.path().join("empty.md").exists());
+        assert!(dest.path().join("nonempty.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_notion_import_attachment_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        let img_path = source.path().join("image.png");
+        std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        // Make attachment unreadable
+        std::fs::set_permissions(&img_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut options = NotionImportOptions::default();
+        options.base.copy_attachments = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Restore permissions
+        std::fs::set_permissions(&img_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(!result.errors.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_notion_import_csv_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        let csv_path = source.path().join("data.csv");
+        std::fs::write(&csv_path, "Name,Value\nA,1").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+
+        // Make CSV unreadable
+        std::fs::set_permissions(&csv_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut options = NotionImportOptions::default();
+        options.convert_csv_to_tables = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Restore permissions
+        std::fs::set_permissions(&csv_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(!result.errors.is_empty());
+        assert!(result.errors[0].message.contains("Could not read CSV"));
+    }
+
+    #[test]
+    fn test_notion_import_csv_empty_produces_empty_table() {
+        // Empty CSV produces empty output (valid case - exercises lines 739-741)
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        std::fs::write(source.path().join("empty.csv"), "").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.convert_csv_to_tables = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // Empty CSV should still succeed
+        assert!(result.success);
+    }
+
+    #[test]
+    fn test_notion_import_csv_with_folder_structure() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Create nested CSV
+        let subdir = source.path().join("Data");
+        std::fs::create_dir(&subdir).unwrap();
+        std::fs::write(subdir.join("table.csv"), "Name,Value\nA,1").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.convert_csv_to_tables = true;
+        options.base.preserve_folder_structure = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        // CSV should be converted and placed in Data/table.md
+        assert!(dest.path().join("Data/table.md").exists());
+    }
+
+    // ============================================================================
+    // Progress Callback Tests
+    // ============================================================================
+
+    #[test]
+    fn test_obsidian_import_progress_callback_phases() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        for i in 0..3 {
+            std::fs::write(source.path().join(format!("note{}.md", i)), "content").unwrap();
+        }
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let options = ImportOptions::default();
+
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = callback_count.clone();
+
+        let callback: ProgressCallback = Box::new(move |_progress| {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let result =
+            import_obsidian_vault(&analysis, dest.path(), &options, Some(callback), None).unwrap();
+
+        assert!(result.success);
+        // Should have been called multiple times (Converting, Finalizing, Complete phases)
+        assert!(callback_count.load(Ordering::SeqCst) >= 3);
+    }
+
+    #[test]
+    fn test_notion_import_progress_callback_phases() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        for i in 0..3 {
+            std::fs::write(source.path().join(format!("note{}.md", i)), "content").unwrap();
+        }
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let options = NotionImportOptions::default();
+
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = callback_count.clone();
+
+        let callback: ProgressCallback = Box::new(move |_progress| {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let result =
+            import_notion_export(&analysis, dest.path(), &options, Some(callback), None).unwrap();
+
+        assert!(result.success);
+        assert!(callback_count.load(Ordering::SeqCst) >= 3);
+    }
+
+    #[test]
+    fn test_notion_import_updates_links_when_removing_uuids() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Create a file that links to another UUID-named file
+        let target_name = "Target Page 12345678901234567890123456789012.md";
+        std::fs::write(source.path().join(target_name), "Target content").unwrap();
+        std::fs::write(
+            source.path().join("linker.md"),
+            format!("See [Target Page]({})", target_name),
+        )
+        .unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.remove_uuids = true;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        assert!(result.success);
+        // Link should be updated to point to cleaned filename
+        let content = std::fs::read_to_string(dest.path().join("linker.md")).unwrap();
+        assert!(content.contains("](Target Page.md)"));
+    }
+
+    #[test]
+    fn test_notion_import_without_folder_structure() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Create nested structure
+        let subdir = source.path().join("Nested/Deep");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(subdir.join("note.md"), "content").unwrap();
+
+        let analysis = analyze_notion_export(source.path()).unwrap();
+        let mut options = NotionImportOptions::default();
+        options.base.preserve_folder_structure = false;
+
+        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+
+        assert!(result.success);
+        // File should be flattened to root
+        assert!(dest.path().join("note.md").exists());
+    }
+
+    #[test]
+    fn test_import_attachments_disabled() {
+        let source = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        std::fs::create_dir(source.path().join(".obsidian")).unwrap();
+
+        std::fs::write(source.path().join("note.md"), "content").unwrap();
+        std::fs::write(source.path().join("image.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        let analysis = analyze_obsidian_vault(source.path()).unwrap();
+        let mut options = ImportOptions::default();
+        options.copy_attachments = false;
+
+        let result = import_obsidian_vault(&analysis, dest.path(), &options, None, None).unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.attachments_copied, 0);
+        assert!(!dest.path().join("image.png").exists());
     }
 }
