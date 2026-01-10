@@ -1,6 +1,6 @@
 [package]
 name = "midlight"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI-native document editor"
 authors = ["Midlight"]
 edition = "2021"
