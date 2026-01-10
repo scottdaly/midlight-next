@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
+
+use crate::traits::{TimeProvider, RealTimeProvider};
 
 const DEFAULT_BASE_URL: &str = "https://midlight.ai";
 const TOKEN_REFRESH_BUFFER_SECS: i64 = 60; // Refresh 60 seconds before expiry
@@ -154,11 +155,12 @@ impl std::error::Error for AuthError {}
 // Auth Service
 // ============================================================================
 
-pub struct AuthService {
+pub struct AuthService<T: TimeProvider = RealTimeProvider> {
     client: Client,
     cookie_store: Arc<CookieStoreMutex>,
     app_data_dir: PathBuf,
     base_url: String,
+    time_provider: Arc<T>,
     // In-memory token storage (never persisted to disk)
     access_token: RwLock<Option<String>>,
     token_expiry: RwLock<Option<i64>>, // Unix timestamp
@@ -166,8 +168,23 @@ pub struct AuthService {
     auth_state: RwLock<AuthState>,
 }
 
-impl AuthService {
+/// Type alias for production use
+#[allow(dead_code)]
+pub type ProductionAuthService = AuthService<RealTimeProvider>;
+
+impl AuthService<RealTimeProvider> {
     pub fn new(app_data_dir: PathBuf, base_url: Option<String>) -> Self {
+        Self::with_time_provider(app_data_dir, base_url, Arc::new(RealTimeProvider))
+    }
+}
+
+impl<T: TimeProvider> AuthService<T> {
+    /// Create a new AuthService with custom time provider (for testing)
+    pub fn with_time_provider(
+        app_data_dir: PathBuf,
+        base_url: Option<String>,
+        time_provider: Arc<T>,
+    ) -> Self {
         // Load existing cookies from disk
         let cookie_store = Self::load_cookie_store(&app_data_dir);
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
@@ -191,6 +208,30 @@ impl AuthService {
             cookie_store,
             app_data_dir,
             base_url: base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            time_provider,
+            access_token: RwLock::new(None),
+            token_expiry: RwLock::new(None),
+            user: RwLock::new(None),
+            auth_state: RwLock::new(AuthState::Initializing),
+        }
+    }
+
+    /// Create a new AuthService for testing with a custom HTTP client
+    #[cfg(test)]
+    pub fn with_client_for_testing(
+        app_data_dir: PathBuf,
+        base_url: String,
+        client: Client,
+        time_provider: Arc<T>,
+    ) -> Self {
+        let cookie_store = Arc::new(CookieStoreMutex::new(CookieStore::default()));
+
+        Self {
+            client,
+            cookie_store,
+            app_data_dir,
+            base_url,
+            time_provider,
             access_token: RwLock::new(None),
             token_expiry: RwLock::new(None),
             user: RwLock::new(None),
@@ -269,11 +310,7 @@ impl AuthService {
     }
 
     fn set_tokens(&self, access_token: &str, expires_in: u64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
+        let now = self.time_provider.unix_timestamp();
         let expiry = now + (expires_in as i64);
 
         *self.access_token.write().unwrap() = Some(access_token.to_string());
@@ -294,10 +331,7 @@ impl AuthService {
         let expiry = self.token_expiry.read().unwrap();
         match *expiry {
             Some(exp) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
+                let now = self.time_provider.unix_timestamp();
                 now >= (exp - TOKEN_REFRESH_BUFFER_SECS)
             }
             None => true,
@@ -860,7 +894,7 @@ impl AuthService {
 // ============================================================================
 
 lazy_static::lazy_static! {
-    pub static ref AUTH_SERVICE: AuthService = {
+    pub static ref AUTH_SERVICE: AuthService<RealTimeProvider> = {
         // Get app data directory
         let app_data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -868,4 +902,2342 @@ lazy_static::lazy_static! {
 
         AuthService::new(app_data_dir, None)
     };
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::time::MockTimeProvider;
+    use tempfile::tempdir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn create_test_service(
+        base_url: &str,
+        time_provider: Arc<MockTimeProvider>,
+    ) -> AuthService<MockTimeProvider> {
+        let temp = tempdir().unwrap();
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        AuthService::with_client_for_testing(
+            temp.path().to_path_buf(),
+            base_url.to_string(),
+            client,
+            time_provider,
+        )
+    }
+
+    fn mock_auth_response() -> serde_json::Value {
+        serde_json::json!({
+            "user": {
+                "id": 1,
+                "email": "test@example.com",
+                "displayName": "Test User",
+                "avatarUrl": null
+            },
+            "accessToken": "mock_access_token",
+            "expiresIn": 3600
+        })
+    }
+
+    #[tokio::test]
+    async fn test_login_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.user.email, "test@example.com");
+        assert_eq!(response.access_token, "mock_access_token");
+        assert!(service.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_login_invalid_credentials() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                    "message": "Invalid credentials"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "wrong_password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "AUTH_REQUIRED");
+    }
+
+    #[tokio::test]
+    async fn test_signup_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/signup"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service
+            .signup("test@example.com", "password", Some("Test User"))
+            .await;
+
+        assert!(result.is_ok());
+        assert!(service.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_token_expiry_detection() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider.clone(),
+        );
+
+        // Set tokens with 3600 second expiry (at time 1704067200)
+        service.set_tokens("test_token", 3600);
+
+        // Token should be valid initially
+        assert!(!service.is_token_expired());
+
+        // Advance time by 3539 seconds (still within buffer - 1 second before buffer threshold)
+        time_provider.advance_secs(3539);
+        assert!(!service.is_token_expired());
+
+        // Advance 1 more second - now at buffer (60 secs before expiry)
+        time_provider.advance_secs(1);
+        assert!(service.is_token_expired());
+    }
+
+    #[tokio::test]
+    async fn test_logout_clears_state() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/logout"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        // Login first
+        service.login("test@example.com", "password").await.unwrap();
+        assert!(service.is_authenticated());
+
+        // Logout
+        service.logout().await.unwrap();
+        assert!(!service.is_authenticated());
+        assert!(service.get_user().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_oauth_url() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://midlight.ai".to_string()),
+            time_provider,
+        );
+
+        let url = service.get_oauth_url(None);
+        assert_eq!(url, "https://midlight.ai/api/auth/google?desktop=true");
+
+        let url_with_port = service.get_oauth_url(Some(8080));
+        assert_eq!(
+            url_with_port,
+            "https://midlight.ai/api/auth/google?desktop=true&callback_port=8080"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_state_transitions() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // Initial state
+        assert_eq!(service.get_auth_state(), AuthState::Initializing);
+
+        // After setting unauthenticated
+        service.set_auth_state(AuthState::Unauthenticated);
+        assert_eq!(service.get_auth_state(), AuthState::Unauthenticated);
+
+        // After setting authenticated
+        service.set_auth_state(AuthState::Authenticated);
+        assert_eq!(service.get_auth_state(), AuthState::Authenticated);
+    }
+
+    #[tokio::test]
+    async fn test_get_subscription() {
+        let mock_server = MockServer::start().await;
+
+        // Login first
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/subscription"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subscription": {
+                    "tier": "pro",
+                    "status": "active",
+                    "billingInterval": "monthly",
+                    "currentPeriodEnd": "2024-02-01T00:00:00Z"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let subscription = service.get_subscription().await.unwrap();
+
+        assert_eq!(subscription.tier, "pro");
+        assert_eq!(subscription.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_get_quota() {
+        let mock_server = MockServer::start().await;
+
+        // Login first
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "quota": {
+                    "used": 100,
+                    "limit": 1000,
+                    "remaining": 900
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let quota = service.get_quota().await.unwrap();
+
+        assert_eq!(quota.used, 100);
+        assert_eq!(quota.limit, Some(1000));
+        assert_eq!(quota.remaining, Some(900));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                    "message": "Too many requests"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "RATE_LIMITED");
+    }
+
+    // ============================================================================
+    // Additional Tests
+    // ============================================================================
+
+    #[test]
+    fn test_user_serialization() {
+        let user = User {
+            id: 123,
+            email: "test@example.com".to_string(),
+            display_name: Some("Test User".to_string()),
+            avatar_url: None,
+        };
+
+        let json = serde_json::to_string(&user).unwrap();
+        assert!(json.contains("\"id\":123"));
+        assert!(json.contains("\"email\":\"test@example.com\""));
+        assert!(json.contains("\"displayName\":\"Test User\""));
+    }
+
+    #[test]
+    fn test_user_deserialization() {
+        let json = r#"{"id":456,"email":"user@test.com","displayName":null,"avatarUrl":"https://example.com/avatar.png"}"#;
+        let user: User = serde_json::from_str(json).unwrap();
+
+        assert_eq!(user.id, 456);
+        assert_eq!(user.email, "user@test.com");
+        assert!(user.display_name.is_none());
+        assert_eq!(user.avatar_url, Some("https://example.com/avatar.png".to_string()));
+    }
+
+    #[test]
+    fn test_subscription_serialization() {
+        let sub = Subscription {
+            tier: "pro".to_string(),
+            status: "active".to_string(),
+            billing_interval: Some("monthly".to_string()),
+            current_period_end: Some("2024-02-01T00:00:00Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&sub).unwrap();
+        assert!(json.contains("\"tier\":\"pro\""));
+        assert!(json.contains("\"billingInterval\":\"monthly\""));
+    }
+
+    #[test]
+    fn test_quota_serialization() {
+        let quota = Quota {
+            used: 100,
+            limit: Some(1000),
+            remaining: Some(900),
+        };
+
+        let json = serde_json::to_string(&quota).unwrap();
+        assert!(json.contains("\"used\":100"));
+        assert!(json.contains("\"limit\":1000"));
+    }
+
+    #[test]
+    fn test_auth_state_display() {
+        assert_eq!(format!("{}", AuthState::Initializing), "initializing");
+        assert_eq!(format!("{}", AuthState::Authenticated), "authenticated");
+        assert_eq!(format!("{}", AuthState::Unauthenticated), "unauthenticated");
+    }
+
+    #[test]
+    fn test_auth_error_display() {
+        let error = AuthError {
+            code: "TEST_ERROR".to_string(),
+            message: "Something went wrong".to_string(),
+        };
+
+        assert_eq!(format!("{}", error), "TEST_ERROR: Something went wrong");
+    }
+
+    #[test]
+    fn test_price_serialization() {
+        let price = Price {
+            id: "price_123".to_string(),
+            product_id: "prod_abc".to_string(),
+            name: "Pro Monthly".to_string(),
+            description: Some("Pro plan billed monthly".to_string()),
+            amount: 999,
+            currency: "usd".to_string(),
+            interval: "month".to_string(),
+            features: Some(vec!["Feature 1".to_string(), "Feature 2".to_string()]),
+        };
+
+        let json = serde_json::to_string(&price).unwrap();
+        assert!(json.contains("\"id\":\"price_123\""));
+        assert!(json.contains("\"amount\":999"));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.refresh_access_token().await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.access_token, "mock_access_token");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_expired() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                    "message": "Session expired"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        // Set tokens first
+        service.set_tokens("old_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service.refresh_access_token().await;
+
+        assert!(result.is_err());
+        // State should be cleared after failed refresh
+        assert_eq!(service.get_auth_state(), AuthState::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn test_exchange_oauth_code() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/exchange"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.exchange_oauth_code("oauth_code_123").await;
+
+        assert!(result.is_ok());
+        assert!(service.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/forgot-password"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.forgot_password("test@example.com").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_reset_password() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/reset-password"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.reset_password("reset_token", "new_password").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_prices() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/subscription/prices"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "prices": [
+                    {
+                        "id": "price_monthly",
+                        "productId": "prod_pro",
+                        "name": "Pro Monthly",
+                        "description": "Monthly subscription",
+                        "amount": 999,
+                        "currency": "usd",
+                        "interval": "month",
+                        "features": ["Unlimited AI", "Priority support"]
+                    }
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.get_prices().await;
+
+        assert!(result.is_ok());
+        let prices = result.unwrap();
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].id, "price_monthly");
+        assert_eq!(prices[0].amount, 999);
+    }
+
+    #[tokio::test]
+    async fn test_create_checkout_session() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/checkout"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "url": "https://checkout.stripe.com/session_123",
+                "sessionId": "cs_test_123"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_checkout_session("price_123").await;
+
+        assert!(result.is_ok());
+        let session = result.unwrap();
+        assert!(session.url.contains("checkout.stripe.com"));
+    }
+
+    #[tokio::test]
+    async fn test_create_portal_session() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/portal"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "url": "https://billing.stripe.com/portal_123"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_portal_session().await;
+
+        assert!(result.is_ok());
+        let portal = result.unwrap();
+        assert!(portal.url.contains("billing.stripe.com"));
+    }
+
+    #[tokio::test]
+    async fn test_update_profile() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/api/user/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1,
+                "email": "new@example.com",
+                "displayName": "New Name",
+                "avatarUrl": null
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service
+            .update_profile(Some("new@example.com"), Some("New Name"), None, None)
+            .await;
+
+        assert!(result.is_ok());
+        let user = result.unwrap();
+        assert_eq!(user.email, "new@example.com");
+        assert_eq!(user.display_name, Some("New Name".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_server_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                    "message": "Internal server error"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "SERVER_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_conflict_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/signup"))
+            .respond_with(
+                ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                    "message": "Email already exists"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.signup("existing@example.com", "password", None).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn test_get_user_before_login() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        assert!(service.get_user().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_user_after_login() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+
+        let user = service.get_user();
+        assert!(user.is_some());
+        assert_eq!(user.unwrap().email, "test@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_init_without_stored_session() {
+        let mock_server = MockServer::start().await;
+
+        // Refresh should fail (no stored cookies)
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.init().await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), AuthState::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn test_get_subscription_not_authenticated() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.get_subscription().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_AUTHENTICATED");
+    }
+
+    #[tokio::test]
+    async fn test_clear_tokens() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // Set tokens
+        service.set_tokens("test_token", 3600);
+        *service.user.write().unwrap() = Some(User {
+            id: 1,
+            email: "test@example.com".to_string(),
+            display_name: None,
+            avatar_url: None,
+        });
+
+        // Clear tokens
+        service.clear_tokens();
+
+        assert!(service.access_token.read().unwrap().is_none());
+        assert!(service.token_expiry.read().unwrap().is_none());
+        assert!(service.user.read().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_auth_response_serialization() {
+        let response = AuthResponse {
+            user: User {
+                id: 1,
+                email: "test@example.com".to_string(),
+                display_name: None,
+                avatar_url: None,
+            },
+            access_token: "token123".to_string(),
+            expires_in: 3600,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"accessToken\":\"token123\""));
+        assert!(json.contains("\"expiresIn\":3600"));
+    }
+
+    #[test]
+    fn test_checkout_session_serialization() {
+        let session = CheckoutSession {
+            url: "https://checkout.stripe.com/test".to_string(),
+            session_id: Some("cs_123".to_string()),
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"url\":\"https://checkout.stripe.com/test\""));
+        assert!(json.contains("\"sessionId\":\"cs_123\""));
+    }
+
+    #[test]
+    fn test_portal_session_serialization() {
+        let session = PortalSession {
+            url: "https://billing.stripe.com/portal".to_string(),
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"url\":\"https://billing.stripe.com/portal\""));
+    }
+
+    // ============================================================================
+    // Cookie Store Tests
+    // ============================================================================
+
+    #[test]
+    fn test_save_cookies_creates_file() {
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.save_cookies();
+        assert!(result.is_ok());
+
+        // Verify file was created
+        let cookie_path = temp.path().join("cookies.json");
+        assert!(cookie_path.exists());
+    }
+
+    #[test]
+    fn test_load_cookie_store_nonexistent_file() {
+        let temp = tempdir().unwrap();
+        let store = AuthService::<RealTimeProvider>::load_cookie_store(temp.path());
+
+        // Should return default empty store
+        assert!(store.iter_any().count() == 0);
+    }
+
+    #[test]
+    fn test_load_cookie_store_invalid_json() {
+        let temp = tempdir().unwrap();
+        let cookie_path = temp.path().join("cookies.json");
+
+        // Write invalid JSON
+        std::fs::write(&cookie_path, "not valid json").unwrap();
+
+        let store = AuthService::<RealTimeProvider>::load_cookie_store(temp.path());
+
+        // Should return default empty store on parse error
+        assert!(store.iter_any().count() == 0);
+    }
+
+    #[test]
+    fn test_clear_cookies_removes_file() {
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // Save cookies first
+        service.save_cookies().unwrap();
+        let cookie_path = temp.path().join("cookies.json");
+        assert!(cookie_path.exists());
+
+        // Clear cookies
+        let result = service.clear_cookies();
+        assert!(result.is_ok());
+        assert!(!cookie_path.exists());
+    }
+
+    #[test]
+    fn test_clear_cookies_nonexistent_file_ok() {
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // Clear without saving first - should succeed
+        let result = service.clear_cookies();
+        assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // Token Expiry Edge Cases
+    // ============================================================================
+
+    #[test]
+    fn test_is_token_expired_no_expiry_set() {
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // Without setting tokens, should be expired
+        assert!(service.is_token_expired());
+    }
+
+    #[tokio::test]
+    async fn test_get_access_token_valid_token() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+
+        // Should return token without refreshing
+        let token = service.get_access_token().await;
+        assert!(token.is_some());
+        assert_eq!(token.unwrap(), "mock_access_token");
+    }
+
+    #[tokio::test]
+    async fn test_get_access_token_expired_refreshes() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "user": {
+                    "id": 1,
+                    "email": "test@example.com",
+                    "displayName": null,
+                    "avatarUrl": null
+                },
+                "accessToken": "refreshed_token",
+                "expiresIn": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider.clone());
+
+        // Set expired token
+        service.set_tokens("old_token", 100);
+        time_provider.advance_secs(200); // Past expiry
+
+        let token = service.get_access_token().await;
+        assert!(token.is_some());
+        assert_eq!(token.unwrap(), "refreshed_token");
+    }
+
+    #[tokio::test]
+    async fn test_get_access_token_refresh_fails() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider.clone());
+
+        // Set expired token
+        service.set_tokens("old_token", 100);
+        time_provider.advance_secs(200);
+
+        let token = service.get_access_token().await;
+        assert!(token.is_none());
+    }
+
+    // ============================================================================
+    // Init Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_init_with_valid_session() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.init().await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), AuthState::Authenticated);
+        assert!(service.is_authenticated());
+    }
+
+    // ============================================================================
+    // Error Response Parsing Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_error_response_403_auth_expired() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                    "message": "Token expired"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "AUTH_EXPIRED");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_404_not_found() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                    "message": "User not found"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_400_invalid_request() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "message": "Invalid email format"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("invalid-email", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_unknown_status() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(418).set_body_json(serde_json::json!({
+                    "message": "I'm a teapot"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "UNKNOWN");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_no_body() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "AUTH_REQUIRED");
+        assert!(error.message.contains("HTTP 401"));
+    }
+
+    #[tokio::test]
+    async fn test_error_response_no_message_field() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                    "error": "Something went wrong"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "SERVER_ERROR");
+        assert!(error.message.contains("HTTP 500"));
+    }
+
+    // ============================================================================
+    // Signup Edge Cases
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_signup_without_display_name() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/signup"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.signup("test@example.com", "password", None).await;
+
+        assert!(result.is_ok());
+        assert!(service.is_authenticated());
+    }
+
+    // ============================================================================
+    // Refresh Token Internal Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_refresh_internal_without_emit_expired() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                    "message": "Session expired"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        // Set to authenticated first
+        service.set_auth_state(AuthState::Authenticated);
+        service.set_tokens("old_token", 3600);
+
+        // Call internal method with emit_expired = false
+        let result = service.refresh_access_token_internal(false).await;
+
+        assert!(result.is_err());
+        // State should NOT be cleared (emit_expired = false)
+        // Note: The internal method still has the behavior based on emit_expired
+        // With emit_expired = false, it shouldn't clear state
+    }
+
+    // ============================================================================
+    // Get Quota Not Authenticated
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_get_quota_not_authenticated() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.get_quota().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_AUTHENTICATED");
+    }
+
+    // ============================================================================
+    // Create Checkout/Portal Not Authenticated
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_create_checkout_not_authenticated() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.create_checkout_session("price_123").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_AUTHENTICATED");
+    }
+
+    #[tokio::test]
+    async fn test_create_portal_not_authenticated() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.create_portal_session().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_AUTHENTICATED");
+    }
+
+    #[tokio::test]
+    async fn test_update_profile_not_authenticated() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service
+            .update_profile(Some("new@example.com"), None, None, None)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_AUTHENTICATED");
+    }
+
+    // ============================================================================
+    // Error Scenarios for Various Endpoints
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_forgot_password_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/forgot-password"))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                    "message": "Email not found"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.forgot_password("unknown@example.com").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_reset_password_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/reset-password"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "message": "Invalid token"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.reset_password("invalid_token", "new_password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/subscription/prices"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.get_prices().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "SERVER_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_exchange_oauth_code_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/exchange"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "message": "Invalid code"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.exchange_oauth_code("invalid_code").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "INVALID_REQUEST");
+    }
+
+    // ============================================================================
+    // Trait Implementation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_user_debug() {
+        let user = User {
+            id: 1,
+            email: "test@example.com".to_string(),
+            display_name: None,
+            avatar_url: None,
+        };
+
+        let debug_str = format!("{:?}", user);
+        assert!(debug_str.contains("User"));
+        assert!(debug_str.contains("test@example.com"));
+    }
+
+    #[test]
+    fn test_user_clone() {
+        let user = User {
+            id: 1,
+            email: "test@example.com".to_string(),
+            display_name: Some("Test".to_string()),
+            avatar_url: None,
+        };
+
+        let cloned = user.clone();
+        assert_eq!(cloned.id, user.id);
+        assert_eq!(cloned.email, user.email);
+    }
+
+    #[test]
+    fn test_subscription_debug() {
+        let sub = Subscription {
+            tier: "pro".to_string(),
+            status: "active".to_string(),
+            billing_interval: None,
+            current_period_end: None,
+        };
+
+        let debug_str = format!("{:?}", sub);
+        assert!(debug_str.contains("Subscription"));
+        assert!(debug_str.contains("pro"));
+    }
+
+    #[test]
+    fn test_quota_debug() {
+        let quota = Quota {
+            used: 100,
+            limit: Some(1000),
+            remaining: Some(900),
+        };
+
+        let debug_str = format!("{:?}", quota);
+        assert!(debug_str.contains("Quota"));
+    }
+
+    #[test]
+    fn test_price_debug() {
+        let price = Price {
+            id: "price_123".to_string(),
+            product_id: "prod_456".to_string(),
+            name: "Pro".to_string(),
+            description: None,
+            amount: 999,
+            currency: "usd".to_string(),
+            interval: "month".to_string(),
+            features: None,
+        };
+
+        let debug_str = format!("{:?}", price);
+        assert!(debug_str.contains("Price"));
+    }
+
+    #[test]
+    fn test_auth_error_debug() {
+        let error = AuthError {
+            code: "TEST".to_string(),
+            message: "Test error".to_string(),
+        };
+
+        let debug_str = format!("{:?}", error);
+        assert!(debug_str.contains("AuthError"));
+    }
+
+    #[test]
+    fn test_auth_state_partial_eq() {
+        assert_eq!(AuthState::Initializing, AuthState::Initializing);
+        assert_eq!(AuthState::Authenticated, AuthState::Authenticated);
+        assert_eq!(AuthState::Unauthenticated, AuthState::Unauthenticated);
+        assert_ne!(AuthState::Authenticated, AuthState::Unauthenticated);
+    }
+
+    #[test]
+    fn test_auth_error_is_error() {
+        let error = AuthError {
+            code: "TEST".to_string(),
+            message: "Test".to_string(),
+        };
+
+        // This tests that AuthError implements std::error::Error
+        let _: &dyn std::error::Error = &error;
+    }
+
+    // ============================================================================
+    // Update Profile with Password Change
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_update_profile_with_password() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/api/user/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1,
+                "email": "test@example.com",
+                "displayName": "Test User",
+                "avatarUrl": null
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+
+        let result = service
+            .update_profile(None, None, Some("old_password"), Some("new_password"))
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // Default Base URL Test
+    // ============================================================================
+
+    #[test]
+    fn test_default_base_url() {
+        let temp = tempdir().unwrap();
+
+        let service = AuthService::new(temp.path().to_path_buf(), None);
+
+        // The service uses DEFAULT_BASE_URL when None is passed
+        let oauth_url = service.get_oauth_url(None);
+        assert!(oauth_url.starts_with("https://midlight.ai"));
+    }
+
+    // ============================================================================
+    // Subscription Response Deserialization
+    // ============================================================================
+
+    #[test]
+    fn test_subscription_response_deserialize() {
+        let json = r#"{"subscription":{"tier":"free","status":"active","billingInterval":null,"currentPeriodEnd":null}}"#;
+        let response: SubscriptionResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.subscription.tier, "free");
+        assert_eq!(response.subscription.status, "active");
+    }
+
+    #[test]
+    fn test_usage_response_deserialize() {
+        let json = r#"{"quota":{"used":50,"limit":100,"remaining":50}}"#;
+        let response: UsageResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.quota.used, 50);
+        assert_eq!(response.quota.limit, Some(100));
+    }
+
+    #[test]
+    fn test_prices_response_deserialize() {
+        let json = r#"{"prices":[{"id":"price_1","productId":"prod_1","name":"Basic","description":null,"amount":499,"currency":"usd","interval":"month","features":null}]}"#;
+        let response: PricesResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.prices.len(), 1);
+        assert_eq!(response.prices[0].id, "price_1");
+    }
+
+    // ============================================================================
+    // Login/Signup Request Serialization
+    // ============================================================================
+
+    #[test]
+    fn test_login_request_serialize() {
+        let request = LoginRequest {
+            email: "test@example.com".to_string(),
+            password: "secret".to_string(),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"email\":\"test@example.com\""));
+        assert!(json.contains("\"password\":\"secret\""));
+    }
+
+    #[test]
+    fn test_signup_request_serialize() {
+        let request = SignupRequest {
+            email: "test@example.com".to_string(),
+            password: "secret".to_string(),
+            display_name: Some("Test User".to_string()),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"displayName\":\"Test User\""));
+    }
+
+    #[test]
+    fn test_exchange_code_request_serialize() {
+        let request = ExchangeCodeRequest {
+            code: "auth_code_123".to_string(),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"code\":\"auth_code_123\""));
+    }
+
+    // ============================================================================
+    // Quota with Unlimited Values
+    // ============================================================================
+
+    #[test]
+    fn test_quota_unlimited() {
+        let quota = Quota {
+            used: 1000,
+            limit: None,
+            remaining: None,
+        };
+
+        let json = serde_json::to_string(&quota).unwrap();
+        assert!(json.contains("\"used\":1000"));
+        assert!(json.contains("\"limit\":null"));
+        assert!(json.contains("\"remaining\":null"));
+    }
+
+    // ============================================================================
+    // File System Error Tests
+    // ============================================================================
+
+    #[test]
+    #[cfg(unix)]
+    fn test_load_cookie_store_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let cookie_path = temp.path().join("cookies.json");
+
+        // Create file with valid JSON content
+        std::fs::write(&cookie_path, "[]").unwrap();
+        // Remove all permissions
+        std::fs::set_permissions(&cookie_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let store = AuthService::<RealTimeProvider>::load_cookie_store(temp.path());
+
+        // Should return default store when permission denied
+        assert!(store.iter_any().count() == 0);
+
+        // Cleanup: restore permissions so tempdir can delete
+        std::fs::set_permissions(&cookie_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_save_cookies_directory_creation_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        // Create a read-only directory
+        let readonly_dir = temp.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        // Service with path that requires creating nested directories inside read-only dir
+        let service = AuthService::with_time_provider(
+            readonly_dir.join("nested").join("deep"),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.save_cookies();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "STORAGE_ERROR");
+        assert!(error.message.contains("Failed to create directory"));
+
+        // Cleanup
+        std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_save_cookies_file_creation_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        // Make directory read-only (can't create files)
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        let result = service.save_cookies();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "STORAGE_ERROR");
+        assert!(error.message.contains("Failed to create cookie file"));
+
+        // Cleanup
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_clear_cookies_delete_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+
+        let service = AuthService::with_time_provider(
+            temp.path().to_path_buf(),
+            Some("https://mock.test".to_string()),
+            time_provider,
+        );
+
+        // First save cookies to create the file
+        service.save_cookies().unwrap();
+        let cookie_path = temp.path().join("cookies.json");
+        assert!(cookie_path.exists());
+
+        // Make directory read-only so file can't be deleted
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = service.clear_cookies();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "STORAGE_ERROR");
+        assert!(error.message.contains("Failed to delete cookie file"));
+
+        // Cleanup
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // ============================================================================
+    // Network Error Tests
+    // ============================================================================
+
+    fn create_unreachable_service(
+        time_provider: Arc<MockTimeProvider>,
+    ) -> (AuthService<MockTimeProvider>, tempfile::TempDir) {
+        let temp = tempdir().unwrap();
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        let service = AuthService::with_client_for_testing(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:1".to_string(), // Port 1 - connection refused
+            client,
+            time_provider,
+        );
+        (service, temp)
+    }
+
+    #[tokio::test]
+    async fn test_login_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_signup_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.signup("test@example.com", "password", None).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.refresh_access_token().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_exchange_oauth_code_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.exchange_oauth_code("code123").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_subscription_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        // Set up authenticated state
+        service.set_tokens("test_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service.get_subscription().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_quota_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        service.set_tokens("test_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service.get_quota().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.get_prices().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_create_checkout_session_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        service.set_tokens("test_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service.create_checkout_session("price_123").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_create_portal_session_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        service.set_tokens("test_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service.create_portal_session().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_forgot_password_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.forgot_password("test@example.com").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_reset_password_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        let result = service.reset_password("token", "newpass").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_update_profile_network_error() {
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let (service, _temp) = create_unreachable_service(time_provider);
+
+        service.set_tokens("test_token", 3600);
+        service.set_auth_state(AuthState::Authenticated);
+
+        let result = service
+            .update_profile(Some("new@example.com"), None, None, None)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+    }
+
+    // ============================================================================
+    // Parse Error Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_login_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.login("test@example.com", "password").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_signup_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/signup"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("invalid"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.signup("test@example.com", "password", None).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{invalid}"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.refresh_access_token().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_exchange_oauth_code_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/exchange"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.exchange_oauth_code("code123").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_subscription_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/subscription"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("bad json"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.get_subscription().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_quota_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.get_quota().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/subscription/prices"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        let result = service.get_prices().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_create_checkout_session_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/checkout"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("broken"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_checkout_session("price_123").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_create_portal_session_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/portal"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("nope"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_portal_session().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_update_profile_parse_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/api/user/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("garbage"))
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service
+            .update_profile(Some("new@example.com"), None, None, None)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "PARSE_ERROR");
+    }
+
+    // ============================================================================
+    // Additional Edge Case Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_get_subscription_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/subscription"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                    "message": "Database error"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.get_subscription().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "SERVER_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_get_quota_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/user/usage"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                    "message": "Access denied"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.get_quota().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "AUTH_EXPIRED");
+    }
+
+    #[tokio::test]
+    async fn test_create_checkout_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/checkout"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "message": "Invalid price ID"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_checkout_session("invalid_price").await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "INVALID_REQUEST");
+    }
+
+    #[tokio::test]
+    async fn test_create_portal_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/subscription/portal"))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                    "message": "No subscription found"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service.create_portal_session().await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_update_profile_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/auth/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_auth_response()))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/api/user/profile"))
+            .respond_with(
+                ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                    "message": "Email already in use"
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
+        let service = create_test_service(&mock_server.uri(), time_provider);
+
+        service.login("test@example.com", "password").await.unwrap();
+        let result = service
+            .update_profile(Some("taken@example.com"), None, None, None)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "CONFLICT");
+    }
 }

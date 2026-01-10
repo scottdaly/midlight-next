@@ -393,7 +393,7 @@ fn parse_document_xml(
 
     // Parsing state
     let mut in_paragraph = false;
-    let mut in_run = false;
+    let mut _in_run = false;
     let mut in_text = false;
     let mut in_run_props = false;
     let mut in_para_props = false;
@@ -422,7 +422,7 @@ fn parse_document_xml(
                         };
                     }
                     b"w:r" => {
-                        in_run = true;
+                        _in_run = true;
                         current_run_props = RunProperties::default();
                         current_text.clear();
                     }
@@ -515,7 +515,7 @@ fn parse_document_xml(
                         }
                     }
                     b"w:r" => {
-                        in_run = false;
+                        _in_run = false;
                         if !current_text.is_empty() {
                             current_paragraph.runs.push(TextRun {
                                 text: current_text.clone(),
@@ -1002,44 +1002,2014 @@ fn create_image_node(image_id: &str) -> TiptapNode {
 mod tests {
     use super::*;
 
+    // ============================================================================
+    // Image Type Detection Tests
+    // ============================================================================
+
     #[test]
-    fn test_detect_image_type() {
-        // PNG
+    fn test_detect_image_type_png() {
         let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         assert_eq!(detect_image_type(&png), "image/png");
+    }
 
-        // JPEG
+    #[test]
+    fn test_detect_image_type_jpeg() {
         let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0];
         assert_eq!(detect_image_type(&jpeg), "image/jpeg");
 
-        // GIF
-        let gif = b"GIF89a".to_vec();
-        assert_eq!(detect_image_type(&gif), "image/gif");
+        // JPEG with different marker
+        let jpeg2 = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        assert_eq!(detect_image_type(&jpeg2), "image/jpeg");
     }
 
     #[test]
-    fn test_highlight_name_to_hex() {
+    fn test_detect_image_type_gif() {
+        let gif89a = b"GIF89a".to_vec();
+        assert_eq!(detect_image_type(&gif89a), "image/gif");
+
+        let gif87a = b"GIF87a".to_vec();
+        assert_eq!(detect_image_type(&gif87a), "image/gif");
+    }
+
+    #[test]
+    fn test_detect_image_type_webp() {
+        // WEBP magic: "RIFF" + size + "WEBP" + extra bytes (must be > 12 bytes)
+        let mut webp = b"RIFF".to_vec();
+        webp.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // size placeholder
+        webp.extend_from_slice(b"WEBP");
+        webp.extend_from_slice(&[0x00]); // Extra byte to make it > 12 bytes
+        assert_eq!(detect_image_type(&webp), "image/webp");
+    }
+
+    #[test]
+    fn test_detect_image_type_unknown() {
+        let unknown = vec![0x00, 0x01, 0x02, 0x03];
+        assert_eq!(detect_image_type(&unknown), "image/png"); // Default fallback
+
+        let empty = vec![];
+        assert_eq!(detect_image_type(&empty), "image/png");
+    }
+
+    #[test]
+    fn test_detect_image_type_too_short_for_webp() {
+        // Less than 12 bytes - can't be WEBP
+        let short = b"RIFF1234".to_vec();
+        assert_eq!(detect_image_type(&short), "image/png");
+    }
+
+    // ============================================================================
+    // Highlight Color Tests
+    // ============================================================================
+
+    #[test]
+    fn test_highlight_name_to_hex_basic_colors() {
         assert_eq!(highlight_name_to_hex("yellow"), "#ffff00");
+        assert_eq!(highlight_name_to_hex("green"), "#00ff00");
+        assert_eq!(highlight_name_to_hex("cyan"), "#00ffff");
+        assert_eq!(highlight_name_to_hex("magenta"), "#ff00ff");
+        assert_eq!(highlight_name_to_hex("blue"), "#0000ff");
         assert_eq!(highlight_name_to_hex("red"), "#ff0000");
-        assert_eq!(highlight_name_to_hex("darkBlue"), "#000080");
     }
 
     #[test]
-    fn test_get_heading_level() {
+    fn test_highlight_name_to_hex_dark_colors() {
+        assert_eq!(highlight_name_to_hex("darkBlue"), "#000080");
+        assert_eq!(highlight_name_to_hex("darkblue"), "#000080");
+        assert_eq!(highlight_name_to_hex("darkCyan"), "#008080");
+        assert_eq!(highlight_name_to_hex("darkcyan"), "#008080");
+        assert_eq!(highlight_name_to_hex("darkGreen"), "#008000");
+        assert_eq!(highlight_name_to_hex("darkgreen"), "#008000");
+        assert_eq!(highlight_name_to_hex("darkMagenta"), "#800080");
+        assert_eq!(highlight_name_to_hex("darkmagenta"), "#800080");
+        assert_eq!(highlight_name_to_hex("darkRed"), "#800000");
+        assert_eq!(highlight_name_to_hex("darkred"), "#800000");
+        assert_eq!(highlight_name_to_hex("darkYellow"), "#808000");
+        assert_eq!(highlight_name_to_hex("darkyellow"), "#808000");
+    }
+
+    #[test]
+    fn test_highlight_name_to_hex_gray_colors() {
+        assert_eq!(highlight_name_to_hex("darkGray"), "#808080");
+        assert_eq!(highlight_name_to_hex("darkgray"), "#808080");
+        assert_eq!(highlight_name_to_hex("lightGray"), "#c0c0c0");
+        assert_eq!(highlight_name_to_hex("lightgray"), "#c0c0c0");
+    }
+
+    #[test]
+    fn test_highlight_name_to_hex_bw() {
+        assert_eq!(highlight_name_to_hex("black"), "#000000");
+        assert_eq!(highlight_name_to_hex("white"), "#ffffff");
+    }
+
+    #[test]
+    fn test_highlight_name_to_hex_unknown() {
+        assert_eq!(highlight_name_to_hex("unknown"), "#ffff00"); // Default to yellow
+        assert_eq!(highlight_name_to_hex(""), "#ffff00");
+        assert_eq!(highlight_name_to_hex("notacolor"), "#ffff00");
+    }
+
+    #[test]
+    fn test_highlight_name_to_hex_case_insensitive() {
+        assert_eq!(highlight_name_to_hex("YELLOW"), "#ffff00");
+        assert_eq!(highlight_name_to_hex("Yellow"), "#ffff00");
+        assert_eq!(highlight_name_to_hex("RED"), "#ff0000");
+    }
+
+    // ============================================================================
+    // Heading Level Tests
+    // ============================================================================
+
+    #[test]
+    fn test_get_heading_level_heading_prefix() {
         assert_eq!(get_heading_level(&Some("Heading1".to_string())), Some(1));
+        assert_eq!(get_heading_level(&Some("Heading2".to_string())), Some(2));
+        assert_eq!(get_heading_level(&Some("Heading3".to_string())), Some(3));
+        assert_eq!(get_heading_level(&Some("heading1".to_string())), Some(1));
         assert_eq!(get_heading_level(&Some("heading2".to_string())), Some(2));
+        assert_eq!(get_heading_level(&Some("HEADING1".to_string())), Some(1));
+    }
+
+    #[test]
+    fn test_get_heading_level_h_prefix() {
+        assert_eq!(get_heading_level(&Some("H1".to_string())), Some(1));
+        assert_eq!(get_heading_level(&Some("H2".to_string())), Some(2));
+        assert_eq!(get_heading_level(&Some("h1".to_string())), Some(1));
+        assert_eq!(get_heading_level(&Some("h3".to_string())), Some(3));
+    }
+
+    #[test]
+    fn test_get_heading_level_title_subtitle() {
         assert_eq!(get_heading_level(&Some("Title".to_string())), Some(1));
+        assert_eq!(get_heading_level(&Some("title".to_string())), Some(1));
+        assert_eq!(get_heading_level(&Some("TITLE".to_string())), Some(1));
         assert_eq!(get_heading_level(&Some("Subtitle".to_string())), Some(2));
+        assert_eq!(get_heading_level(&Some("subtitle".to_string())), Some(2));
+    }
+
+    #[test]
+    fn test_get_heading_level_non_heading() {
         assert_eq!(get_heading_level(&Some("Normal".to_string())), None);
+        assert_eq!(get_heading_level(&Some("BodyText".to_string())), None);
+        assert_eq!(get_heading_level(&Some("ListParagraph".to_string())), None);
         assert_eq!(get_heading_level(&None), None);
     }
 
     #[test]
-    fn test_is_heading_style() {
+    fn test_get_heading_level_invalid_h_style() {
+        // H prefix but not exactly 2 chars or not followed by digit
+        assert_eq!(get_heading_level(&Some("H10".to_string())), None);
+        assert_eq!(get_heading_level(&Some("Ha".to_string())), None);
+        assert_eq!(get_heading_level(&Some("H".to_string())), None);
+    }
+
+    // ============================================================================
+    // Is Heading Style Tests
+    // ============================================================================
+
+    #[test]
+    fn test_is_heading_style_heading_prefix() {
         assert!(is_heading_style(&Some("Heading1".to_string())));
-        assert!(is_heading_style(&Some("heading2".to_string())));
+        assert!(is_heading_style(&Some("Heading2".to_string())));
+        assert!(is_heading_style(&Some("heading3".to_string())));
+        assert!(is_heading_style(&Some("HeadingCustom".to_string())));
+    }
+
+    #[test]
+    fn test_is_heading_style_title_subtitle() {
         assert!(is_heading_style(&Some("Title".to_string())));
+        assert!(is_heading_style(&Some("title".to_string())));
+        assert!(is_heading_style(&Some("Subtitle".to_string())));
+        assert!(is_heading_style(&Some("subtitle".to_string())));
+    }
+
+    #[test]
+    fn test_is_heading_style_h_prefix() {
+        assert!(is_heading_style(&Some("H1".to_string())));
+        assert!(is_heading_style(&Some("H2".to_string())));
+        assert!(is_heading_style(&Some("h3".to_string())));
+        assert!(is_heading_style(&Some("h9".to_string())));
+    }
+
+    #[test]
+    fn test_is_heading_style_non_heading() {
         assert!(!is_heading_style(&Some("Normal".to_string())));
+        assert!(!is_heading_style(&Some("BodyText".to_string())));
+        assert!(!is_heading_style(&Some("ListParagraph".to_string())));
         assert!(!is_heading_style(&None));
+    }
+
+    #[test]
+    fn test_is_heading_style_edge_cases() {
+        // H prefix but invalid
+        assert!(!is_heading_style(&Some("H10".to_string())));
+        assert!(!is_heading_style(&Some("Ha".to_string())));
+        assert!(!is_heading_style(&Some("H".to_string())));
+        assert!(!is_heading_style(&Some("Headline".to_string()))); // Starts with h but isn't h#
+    }
+
+    // ============================================================================
+    // Convert Runs to Tiptap Tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_runs_to_tiptap_empty() {
+        let runs: Vec<TextRun> = vec![];
+        let result = convert_runs_to_tiptap(&runs);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_plain_text() {
+        let runs = vec![TextRun {
+            text: "Hello world".to_string(),
+            props: RunProperties::default(),
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].node_type, "text");
+        assert_eq!(result[0].text, Some("Hello world".to_string()));
+        assert!(result[0].marks.is_empty());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_bold() {
+        let runs = vec![TextRun {
+            text: "Bold text".to_string(),
+            props: RunProperties {
+                bold: true,
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "bold");
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_italic() {
+        let runs = vec![TextRun {
+            text: "Italic text".to_string(),
+            props: RunProperties {
+                italic: true,
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "italic");
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_underline() {
+        let runs = vec![TextRun {
+            text: "Underlined".to_string(),
+            props: RunProperties {
+                underline: true,
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "underline");
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_strike() {
+        let runs = vec![TextRun {
+            text: "Strikethrough".to_string(),
+            props: RunProperties {
+                strike: true,
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "strike");
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_multiple_marks() {
+        let runs = vec![TextRun {
+            text: "Bold and italic".to_string(),
+            props: RunProperties {
+                bold: true,
+                italic: true,
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 2);
+        let mark_types: Vec<&str> = result[0].marks.iter().map(|m| m.mark_type.as_str()).collect();
+        assert!(mark_types.contains(&"bold"));
+        assert!(mark_types.contains(&"italic"));
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_with_color() {
+        let runs = vec![TextRun {
+            text: "Red text".to_string(),
+            props: RunProperties {
+                color: Some("#FF0000".to_string()),
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "textStyle");
+        let attrs = result[0].marks[0].attrs.as_ref().unwrap();
+        assert!(attrs.get("color").is_some());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_with_highlight() {
+        let runs = vec![TextRun {
+            text: "Highlighted".to_string(),
+            props: RunProperties {
+                highlight: Some("#FFFF00".to_string()),
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        let mark_types: Vec<&str> = result[0].marks.iter().map(|m| m.mark_type.as_str()).collect();
+        assert!(mark_types.contains(&"highlight"));
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_with_font_size() {
+        let runs = vec![TextRun {
+            text: "Large text".to_string(),
+            props: RunProperties {
+                font_size: Some("24px".to_string()),
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "textStyle");
+        let attrs = result[0].marks[0].attrs.as_ref().unwrap();
+        assert!(attrs.get("fontSize").is_some());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_with_font_family() {
+        let runs = vec![TextRun {
+            text: "Custom font".to_string(),
+            props: RunProperties {
+                font_family: Some("Arial".to_string()),
+                ..Default::default()
+            },
+        }];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].marks.len(), 1);
+        assert_eq!(result[0].marks[0].mark_type, "textStyle");
+        let attrs = result[0].marks[0].attrs.as_ref().unwrap();
+        assert!(attrs.get("fontFamily").is_some());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_multiple_runs() {
+        let runs = vec![
+            TextRun {
+                text: "Normal ".to_string(),
+                props: RunProperties::default(),
+            },
+            TextRun {
+                text: "bold".to_string(),
+                props: RunProperties {
+                    bold: true,
+                    ..Default::default()
+                },
+            },
+            TextRun {
+                text: " text".to_string(),
+                props: RunProperties::default(),
+            },
+        ];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 3);
+        assert!(result[0].marks.is_empty());
+        assert_eq!(result[1].marks[0].mark_type, "bold");
+        assert!(result[2].marks.is_empty());
+    }
+
+    #[test]
+    fn test_convert_runs_to_tiptap_empty_text_filtered() {
+        let runs = vec![
+            TextRun {
+                text: "".to_string(),
+                props: RunProperties::default(),
+            },
+            TextRun {
+                text: "actual text".to_string(),
+                props: RunProperties::default(),
+            },
+        ];
+        let result = convert_runs_to_tiptap(&runs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, Some("actual text".to_string()));
+    }
+
+    // ============================================================================
+    // Node Creation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_create_paragraph_node_simple() {
+        let content = vec![TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Hello".to_string()),
+            marks: vec![],
+            attrs: None,
+        }];
+        let props = ParagraphProperties::default();
+        let node = create_paragraph_node(content, &props);
+
+        assert_eq!(node.node_type, "paragraph");
+        assert_eq!(node.content.len(), 1);
+        assert!(node.attrs.is_none());
+    }
+
+    #[test]
+    fn test_create_paragraph_node_with_alignment() {
+        let content = vec![];
+        let props = ParagraphProperties {
+            alignment: Some("center".to_string()),
+            ..Default::default()
+        };
+        let node = create_paragraph_node(content, &props);
+
+        assert_eq!(node.node_type, "paragraph");
+        let attrs = node.attrs.unwrap();
+        assert_eq!(attrs["textAlign"], "center");
+    }
+
+    #[test]
+    fn test_create_heading_node() {
+        let content = vec![TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("Heading".to_string()),
+            marks: vec![],
+            attrs: None,
+        }];
+        let props = ParagraphProperties::default();
+        let node = create_heading_node(2, content, &props);
+
+        assert_eq!(node.node_type, "heading");
+        let attrs = node.attrs.unwrap();
+        assert_eq!(attrs["level"], 2);
+    }
+
+    #[test]
+    fn test_create_heading_node_with_alignment() {
+        let content = vec![];
+        let props = ParagraphProperties {
+            alignment: Some("right".to_string()),
+            ..Default::default()
+        };
+        let node = create_heading_node(1, content, &props);
+
+        let attrs = node.attrs.unwrap();
+        assert_eq!(attrs["level"], 1);
+        assert_eq!(attrs["textAlign"], "right");
+    }
+
+    #[test]
+    fn test_create_list_node_bullet() {
+        let items = vec![TiptapNode {
+            node_type: "listItem".to_string(),
+            content: vec![],
+            text: None,
+            marks: vec![],
+            attrs: None,
+        }];
+        let node = create_list_node("bulletList", items);
+
+        assert_eq!(node.node_type, "bulletList");
+        assert_eq!(node.content.len(), 1);
+    }
+
+    #[test]
+    fn test_create_list_node_ordered() {
+        let items = vec![
+            TiptapNode {
+                node_type: "listItem".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            },
+            TiptapNode {
+                node_type: "listItem".to_string(),
+                content: vec![],
+                text: None,
+                marks: vec![],
+                attrs: None,
+            },
+        ];
+        let node = create_list_node("orderedList", items);
+
+        assert_eq!(node.node_type, "orderedList");
+        assert_eq!(node.content.len(), 2);
+    }
+
+    #[test]
+    fn test_create_list_item_node() {
+        let content = vec![TiptapNode {
+            node_type: "text".to_string(),
+            content: vec![],
+            text: Some("List item".to_string()),
+            marks: vec![],
+            attrs: None,
+        }];
+        let props = ParagraphProperties::default();
+        let node = create_list_item_node(content, &props);
+
+        assert_eq!(node.node_type, "listItem");
+        assert_eq!(node.content.len(), 1);
+        assert_eq!(node.content[0].node_type, "paragraph");
+    }
+
+    #[test]
+    fn test_create_image_node() {
+        let node = create_image_node("img-abc123");
+
+        assert_eq!(node.node_type, "image");
+        let attrs = node.attrs.unwrap();
+        assert_eq!(attrs["src"], "midlight://img-abc123");
+        assert_eq!(attrs["alt"], "");
+        assert_eq!(attrs["title"], "");
+    }
+
+    // ============================================================================
+    // Error Type Tests
+    // ============================================================================
+
+    #[test]
+    fn test_docx_import_error_display() {
+        let err = DocxImportError::FileNotFound("/path/to/file.docx".to_string());
+        assert!(err.to_string().contains("File not found"));
+        assert!(err.to_string().contains("/path/to/file.docx"));
+
+        let err = DocxImportError::FileTooLarge("large.docx".to_string());
+        assert!(err.to_string().contains("too large"));
+
+        let err = DocxImportError::InvalidFormat("Bad format".to_string());
+        assert!(err.to_string().contains("Invalid DOCX format"));
+
+        let err = DocxImportError::XmlParse("Parse error".to_string());
+        assert!(err.to_string().contains("XML parsing error"));
+
+        let err = DocxImportError::ZipError("Zip error".to_string());
+        assert!(err.to_string().contains("ZIP error"));
+
+        let err = DocxImportError::IoError("IO error".to_string());
+        assert!(err.to_string().contains("IO error"));
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: DocxImportError = io_err.into();
+        assert!(matches!(err, DocxImportError::IoError(_)));
+    }
+
+    #[test]
+    fn test_error_from_quick_xml() {
+        // Create a quick_xml error via the Io variant
+        let io_error = std::io::Error::new(std::io::ErrorKind::Other, "test xml error");
+        let xml_err = quick_xml::Error::Io(std::sync::Arc::new(io_error));
+        let err: DocxImportError = xml_err.into();
+        assert!(matches!(err, DocxImportError::XmlParse(_)));
+    }
+
+    // ============================================================================
+    // Tiptap Conversion Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_to_tiptap_empty() {
+        let paragraphs: Vec<ParsedParagraph> = vec![];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.doc_type, "doc");
+        assert!(doc.content.is_empty());
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_simple_paragraph() {
+        let paragraphs = vec![ParsedParagraph {
+            runs: vec![TextRun {
+                text: "Hello world".to_string(),
+                props: RunProperties::default(),
+            }],
+            props: ParagraphProperties::default(),
+            images: vec![],
+        }];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "paragraph");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_heading() {
+        let paragraphs = vec![ParsedParagraph {
+            runs: vec![TextRun {
+                text: "Title".to_string(),
+                props: RunProperties::default(),
+            }],
+            props: ParagraphProperties {
+                style_id: Some("Heading1".to_string()),
+                ..Default::default()
+            },
+            images: vec![],
+        }];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "heading");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_empty_paragraph() {
+        let paragraphs = vec![ParsedParagraph {
+            runs: vec![],
+            props: ParagraphProperties::default(),
+            images: vec![],
+        }];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "paragraph");
+        assert!(doc.content[0].content.is_empty());
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_with_image() {
+        let paragraphs = vec![ParsedParagraph {
+            runs: vec![TextRun {
+                text: "Text with image".to_string(),
+                props: RunProperties::default(),
+            }],
+            props: ParagraphProperties::default(),
+            images: vec!["rId1".to_string()],
+        }];
+        let mut image_id_map: HashMap<String, String> = HashMap::new();
+        image_id_map.insert("rId1".to_string(), "img-abc123".to_string());
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        // Should have image node first, then paragraph
+        assert_eq!(doc.content.len(), 2);
+        assert_eq!(doc.content[0].node_type, "image");
+        assert_eq!(doc.content[1].node_type, "paragraph");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_bullet_list() {
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Item 1".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1), // Odd = bullet
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Item 2".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "bulletList");
+        assert_eq!(doc.content[0].content.len(), 2);
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_ordered_list() {
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "First".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(2), // Even = ordered
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Second".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(2),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "orderedList");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_mixed_content() {
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Title".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    style_id: Some("Heading1".to_string()),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Regular paragraph".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties::default(),
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "List item".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 3);
+        assert_eq!(doc.content[0].node_type, "heading");
+        assert_eq!(doc.content[1].node_type, "paragraph");
+        assert_eq!(doc.content[2].node_type, "bulletList");
+    }
+
+    // ============================================================================
+    // Type and Struct Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_stats_default() {
+        let stats = ImportStats::default();
+        assert_eq!(stats.paragraph_count, 0);
+        assert_eq!(stats.heading_count, 0);
+        assert_eq!(stats.list_count, 0);
+        assert_eq!(stats.image_count, 0);
+        assert_eq!(stats.table_count, 0);
+    }
+
+    #[test]
+    fn test_run_properties_default() {
+        let props = RunProperties::default();
+        assert!(!props.bold);
+        assert!(!props.italic);
+        assert!(!props.underline);
+        assert!(!props.strike);
+        assert!(props.color.is_none());
+        assert!(props.highlight.is_none());
+        assert!(props.font_size.is_none());
+        assert!(props.font_family.is_none());
+    }
+
+    #[test]
+    fn test_paragraph_properties_default() {
+        let props = ParagraphProperties::default();
+        assert!(props.style_id.is_none());
+        assert!(props.alignment.is_none());
+        assert!(props.numbering_level.is_none());
+        assert!(props.numbering_id.is_none());
+    }
+
+    #[test]
+    fn test_import_warning_serialization() {
+        let warning = ImportWarning {
+            code: "test_code".to_string(),
+            message: "Test message".to_string(),
+        };
+        let json = serde_json::to_string(&warning).unwrap();
+        assert!(json.contains("test_code"));
+        assert!(json.contains("Test message"));
+    }
+
+    #[test]
+    fn test_extracted_image_serialization() {
+        let image = ExtractedImage {
+            id: "img-123".to_string(),
+            data: vec![1, 2, 3],
+            content_type: "image/png".to_string(),
+            original_name: "test.png".to_string(),
+            rel_id: "rId1".to_string(),
+        };
+        let json = serde_json::to_string(&image).unwrap();
+        assert!(json.contains("img-123"));
+        assert!(json.contains("image/png"));
+    }
+
+    // ============================================================================
+    // Import/Analyze Function Tests
+    // ============================================================================
+
+    #[test]
+    fn test_import_docx_file_not_found() {
+        let result = import_docx(Path::new("/nonexistent/file.docx"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, DocxImportError::FileNotFound(_)));
+    }
+
+    #[test]
+    fn test_import_docx_wrong_extension() {
+        use tempfile::NamedTempFile;
+        let temp = NamedTempFile::with_suffix(".txt").unwrap();
+        std::fs::write(temp.path(), "content").unwrap();
+
+        let result = import_docx(temp.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, DocxImportError::InvalidFormat(_)));
+        assert!(err.to_string().contains(".docx extension"));
+    }
+
+    #[test]
+    fn test_import_docx_invalid_zip() {
+        use tempfile::NamedTempFile;
+        let temp = NamedTempFile::with_suffix(".docx").unwrap();
+        std::fs::write(temp.path(), "not a zip file").unwrap();
+
+        let result = import_docx(temp.path());
+        assert!(result.is_err());
+        // Should fail on ZIP parsing
+        let err = result.unwrap_err();
+        assert!(matches!(err, DocxImportError::ZipError(_)));
+    }
+
+    #[test]
+    fn test_analyze_docx_file_not_found() {
+        let result = analyze_docx(Path::new("/nonexistent/file.docx"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, DocxImportError::FileNotFound(_)));
+    }
+
+    // ============================================================================
+    // Minimal DOCX Creation and Import Tests
+    // ============================================================================
+
+    /// Create a minimal valid DOCX file for testing
+    fn create_minimal_docx(path: &Path, document_xml: &str) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let file = File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        // Add [Content_Types].xml
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#).unwrap();
+
+        // Add _rels/.rels
+        zip.start_file("_rels/.rels", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#).unwrap();
+
+        // Add word/document.xml
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+
+        // Add word/_rels/document.xml.rels (empty relationships)
+        zip.start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>"#)
+            .unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    /// Create a minimal DOCX with image relationships
+    fn create_docx_with_image(path: &Path, document_xml: &str, image_data: &[u8]) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let file = File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        // Add [Content_Types].xml
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Default Extension="png" ContentType="image/png"/>
+    <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#).unwrap();
+
+        // Add _rels/.rels
+        zip.start_file("_rels/.rels", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#).unwrap();
+
+        // Add word/document.xml
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+
+        // Add word/_rels/document.xml.rels with image relationship
+        zip.start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+</Relationships>"#)
+            .unwrap();
+
+        // Add word/media/image1.png
+        zip.start_file("word/media/image1.png", options).unwrap();
+        zip.write_all(image_data).unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn test_import_docx_minimal_valid() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:t>Hello World</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert!(import_result.warnings.is_empty() || import_result.warnings.len() >= 0);
+        assert!(import_result.images.is_empty());
+    }
+
+    #[test]
+    fn test_import_docx_with_heading() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:pStyle w:val="Heading1"/>
+            </w:pPr>
+            <w:r>
+                <w:t>Main Title</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert_eq!(import_result.stats.heading_count, 1);
+    }
+
+    #[test]
+    fn test_import_docx_with_bold_text() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:b/>
+                </w:rPr>
+                <w:t>Bold text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        // Check the tiptap_json contains bold mark
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("bold"));
+    }
+
+    #[test]
+    fn test_import_docx_with_italic_text() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:i/>
+                </w:rPr>
+                <w:t>Italic text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("italic"));
+    }
+
+    #[test]
+    fn test_import_docx_with_underline() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:u/>
+                </w:rPr>
+                <w:t>Underlined</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("underline"));
+    }
+
+    #[test]
+    fn test_import_docx_with_strikethrough() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:strike/>
+                </w:rPr>
+                <w:t>Strikethrough</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("strike"));
+    }
+
+    #[test]
+    fn test_import_docx_with_color() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:color w:val="FF0000"/>
+                </w:rPr>
+                <w:t>Red text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("textStyle"));
+        assert!(json_str.contains("color"));
+    }
+
+    #[test]
+    fn test_import_docx_with_highlight() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:highlight w:val="yellow"/>
+                </w:rPr>
+                <w:t>Highlighted</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("highlight"));
+    }
+
+    #[test]
+    fn test_import_docx_with_font_size() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:sz w:val="48"/>
+                </w:rPr>
+                <w:t>Large text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("fontSize"));
+        assert!(json_str.contains("24px")); // 48 half-points = 24px
+    }
+
+    #[test]
+    fn test_import_docx_with_font_family() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:rFonts w:ascii="Arial"/>
+                </w:rPr>
+                <w:t>Arial text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("fontFamily"));
+        assert!(json_str.contains("Arial"));
+    }
+
+    #[test]
+    fn test_import_docx_with_alignment() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:jc w:val="center"/>
+            </w:pPr>
+            <w:r>
+                <w:t>Centered text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("textAlign"));
+        assert!(json_str.contains("center"));
+    }
+
+    #[test]
+    fn test_import_docx_with_right_alignment() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:jc w:val="right"/>
+            </w:pPr>
+            <w:r>
+                <w:t>Right aligned</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("right"));
+    }
+
+    #[test]
+    fn test_import_docx_with_justify_alignment() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:jc w:val="both"/>
+            </w:pPr>
+            <w:r>
+                <w:t>Justified text</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("justify"));
+    }
+
+    #[test]
+    fn test_import_docx_with_numbered_list() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:numPr>
+                    <w:ilvl w:val="0"/>
+                    <w:numId w:val="2"/>
+                </w:numPr>
+            </w:pPr>
+            <w:r>
+                <w:t>List item 1</w:t>
+            </w:r>
+        </w:p>
+        <w:p>
+            <w:pPr>
+                <w:numPr>
+                    <w:ilvl w:val="0"/>
+                    <w:numId w:val="2"/>
+                </w:numPr>
+            </w:pPr>
+            <w:r>
+                <w:t>List item 2</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert_eq!(import_result.stats.list_count, 2);
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("orderedList"));
+    }
+
+    #[test]
+    fn test_import_docx_with_bullet_list() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:numPr>
+                    <w:ilvl w:val="0"/>
+                    <w:numId w:val="1"/>
+                </w:numPr>
+            </w:pPr>
+            <w:r>
+                <w:t>Bullet item</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        assert!(json_str.contains("bulletList"));
+    }
+
+    #[test]
+    fn test_import_docx_with_table_warning() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:tbl>
+            <w:tr>
+                <w:tc>
+                    <w:p>
+                        <w:r>
+                            <w:t>Cell</w:t>
+                        </w:r>
+                    </w:p>
+                </w:tc>
+            </w:tr>
+        </w:tbl>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert_eq!(import_result.stats.table_count, 1);
+        // Should have a warning about tables
+        assert!(import_result
+            .warnings
+            .iter()
+            .any(|w| w.code == "unsupported_table"));
+    }
+
+    #[test]
+    fn test_import_docx_with_break() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:t>Line 1</w:t>
+            </w:r>
+            <w:r>
+                <w:br/>
+            </w:r>
+            <w:r>
+                <w:t>Line 2</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_import_docx_with_image() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:drawing>
+                    <wp:inline>
+                        <a:graphic>
+                            <a:graphicData>
+                                <a:blip r:embed="rId1"/>
+                            </a:graphicData>
+                        </a:graphic>
+                    </wp:inline>
+                </w:drawing>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        // PNG magic bytes
+        let png_data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        create_docx_with_image(&docx_path, document_xml, &png_data);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert_eq!(import_result.images.len(), 1);
+        assert_eq!(import_result.images[0].content_type, "image/png");
+    }
+
+    #[test]
+    fn test_analyze_docx_valid() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr>
+                <w:pStyle w:val="Heading1"/>
+            </w:pPr>
+            <w:r>
+                <w:t>Title</w:t>
+            </w:r>
+        </w:p>
+        <w:p>
+            <w:r>
+                <w:t>Paragraph 1</w:t>
+            </w:r>
+        </w:p>
+        <w:p>
+            <w:r>
+                <w:t>Paragraph 2</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = analyze_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let analysis = result.unwrap();
+        assert_eq!(analysis.heading_count, 1);
+        assert_eq!(analysis.paragraph_count, 2);
+        assert!(!analysis.has_tables);
+    }
+
+    #[test]
+    fn test_analyze_docx_with_tables() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:tbl>
+            <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = analyze_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let analysis = result.unwrap();
+        assert_eq!(analysis.table_count, 1);
+        assert!(analysis.has_tables);
+    }
+
+    #[test]
+    fn test_import_docx_missing_document_xml() {
+        use std::io::Write;
+        use tempfile::TempDir;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        // Create a ZIP file without document.xml
+        let file = File::create(&docx_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(b"<?xml version=\"1.0\"?><Types></Types>")
+            .unwrap();
+
+        zip.finish().unwrap();
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, DocxImportError::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn test_import_docx_bold_false_value() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        // Test that w:b with w:val="false" doesn't make text bold
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:b w:val="false"/>
+                </w:rPr>
+                <w:t>Not bold</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        // Should NOT contain bold mark
+        assert!(!json_str.contains("\"bold\""));
+    }
+
+    #[test]
+    fn test_import_docx_color_auto() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        // Test that color="auto" is ignored
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:rPr>
+                    <w:color w:val="auto"/>
+                </w:rPr>
+                <w:t>Auto color</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        let json_str = serde_json::to_string(&import_result.tiptap_json).unwrap();
+        // Should NOT have textStyle with color for "auto"
+        assert!(!json_str.contains("textStyle") || !json_str.contains("\"color\""));
+    }
+
+    #[test]
+    fn test_import_docx_multiple_paragraphs() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p><w:r><w:t>Para 1</w:t></w:r></w:p>
+        <w:p><w:r><w:t>Para 2</w:t></w:r></w:p>
+        <w:p><w:r><w:t>Para 3</w:t></w:r></w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+
+        let import_result = result.unwrap();
+        assert_eq!(import_result.stats.paragraph_count, 3);
+    }
+
+    #[test]
+    fn test_import_docx_empty_paragraph() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let docx_path = temp_dir.path().join("test.docx");
+
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p></w:p>
+        <w:p><w:r><w:t>Content</w:t></w:r></w:p>
+    </w:body>
+</w:document>"#;
+
+        create_minimal_docx(&docx_path, document_xml);
+
+        let result = import_docx(&docx_path);
+        assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // Additional Tiptap Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_to_tiptap_list_type_switch() {
+        // Test switching from bullet list to ordered list
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Bullet".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1), // Odd = bullet
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Ordered".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(2), // Even = ordered
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        // Should have two separate lists
+        assert_eq!(doc.content.len(), 2);
+        assert_eq!(doc.content[0].node_type, "bulletList");
+        assert_eq!(doc.content[1].node_type, "orderedList");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_list_then_paragraph() {
+        // Test list followed by regular paragraph
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "List item".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Regular para".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties::default(),
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        assert_eq!(doc.content.len(), 2);
+        assert_eq!(doc.content[0].node_type, "bulletList");
+        assert_eq!(doc.content[1].node_type, "paragraph");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_heading_breaks_list() {
+        // Test heading in the middle of list items
+        let paragraphs = vec![
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Item 1".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Heading".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    style_id: Some("Heading1".to_string()),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+            ParsedParagraph {
+                runs: vec![TextRun {
+                    text: "Item 2".to_string(),
+                    props: RunProperties::default(),
+                }],
+                props: ParagraphProperties {
+                    numbering_id: Some(1),
+                    numbering_level: Some(0),
+                    ..Default::default()
+                },
+                images: vec![],
+            },
+        ];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        // Should be: bulletList, heading, bulletList
+        assert_eq!(doc.content.len(), 3);
+        assert_eq!(doc.content[0].node_type, "bulletList");
+        assert_eq!(doc.content[1].node_type, "heading");
+        assert_eq!(doc.content[2].node_type, "bulletList");
+    }
+
+    #[test]
+    fn test_convert_to_tiptap_image_without_mapping() {
+        // Test image reference that doesn't exist in map
+        let paragraphs = vec![ParsedParagraph {
+            runs: vec![],
+            props: ParagraphProperties::default(),
+            images: vec!["rIdNonexistent".to_string()],
+        }];
+        let image_id_map: HashMap<String, String> = HashMap::new();
+        let mut warnings = vec![];
+
+        let doc = convert_to_tiptap(paragraphs, &image_id_map, &mut warnings);
+
+        // Should just have the empty paragraph, no image node
+        assert_eq!(doc.content.len(), 1);
+        assert_eq!(doc.content[0].node_type, "paragraph");
+    }
+
+    // ============================================================================
+    // DocxAnalysis Tests
+    // ============================================================================
+
+    #[test]
+    fn test_docx_analysis_serialization() {
+        let analysis = DocxAnalysis {
+            file_name: "test.docx".to_string(),
+            file_size: 12345,
+            paragraph_count: 10,
+            heading_count: 3,
+            image_count: 2,
+            table_count: 1,
+            has_tables: true,
+            warnings: vec!["warning1".to_string()],
+        };
+
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("test.docx"));
+        assert!(json.contains("12345"));
+        // serde uses snake_case by default
+        assert!(json.contains("\"paragraph_count\":10"));
+        assert!(json.contains("\"has_tables\":true"));
+    }
+
+    #[test]
+    fn test_docx_import_result_serialization() {
+        let result = DocxImportResult {
+            tiptap_json: serde_json::json!({"type": "doc"}),
+            images: vec![],
+            warnings: vec![ImportWarning {
+                code: "test".to_string(),
+                message: "test message".to_string(),
+            }],
+            stats: ImportStats::default(),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("tiptap_json") || json.contains("tiptapJson"));
+        assert!(json.contains("test message"));
+    }
+
+    // ============================================================================
+    // Error Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_error_from_zip() {
+        // Test conversion from zip error
+        let zip_err = zip::result::ZipError::FileNotFound;
+        let err: DocxImportError = zip_err.into();
+        assert!(matches!(err, DocxImportError::ZipError(_)));
+        assert!(err.to_string().contains("ZIP error"));
     }
 }

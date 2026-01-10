@@ -1,29 +1,19 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { settings } from '@midlight/stores';
   import WindowsMenu from './WindowsMenu.svelte';
   import WindowControls from './WindowControls.svelte';
   import SearchBar from './SearchBar.svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
 
   // Platform detection
   const isMac = navigator.userAgent.includes('Mac');
   const isWindows = navigator.userAgent.includes('Windows');
-
-  // Adjust overlay controls for Windows
-  $effect(() => {
-    // In Tauri, we don't control window controls overlay colors from JS as easily as Electron
-    // typically this is configured in tauri.conf.json or via rust commands.
-    // For now, we'll assume the OS handles it or the app config is set to transparent titlebar.
-  });
 </script>
 
 <div
   class="h-10 bg-secondary flex items-center select-none relative shrink-0"
 >
   <!-- Drag Region (Background Layer) - Offset on Mac to avoid traffic lights -->
-  <div 
-    class="absolute inset-0 {isMac ? 'left-20' : ''}" 
+  <div
+    class="absolute inset-0 {isMac ? 'left-20' : ''}"
     data-tauri-drag-region
   ></div>
 
