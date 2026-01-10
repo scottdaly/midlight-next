@@ -14,9 +14,9 @@ pub mod traits;
 mod test_utils;
 
 use std::sync::Arc;
-use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
 use tokio::sync::RwLock;
 
 use commands::error_reporter::ErrorReporterState;

@@ -690,8 +690,8 @@ mod tests {
         // Various URL-encoded path traversal attempts
         assert!(sanitize_relative_path("%2e%2e%2f").is_err()); // ../
         assert!(sanitize_relative_path("..%2f").is_err()); // ../
-        // Note: %5c (\) is only a path separator on Windows, not Unix
-        // So we only test forward slash encoding which is universal
+                                                           // Note: %5c (\) is only a path separator on Windows, not Unix
+                                                           // So we only test forward slash encoding which is universal
         assert!(sanitize_relative_path("%2e%2e/%2e%2e/secret").is_err()); // ../../secret
     }
 

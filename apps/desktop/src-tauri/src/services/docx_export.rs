@@ -987,7 +987,10 @@ mod tests {
         assert_eq!(extract_font_name(Some("Merriweather, serif")), "Georgia");
         assert_eq!(extract_font_name(Some("Crimson Text, serif")), "Georgia");
         assert_eq!(extract_font_name(Some("Lora, serif")), "Georgia");
-        assert_eq!(extract_font_name(Some("Playfair Display, serif")), "Georgia");
+        assert_eq!(
+            extract_font_name(Some("Playfair Display, serif")),
+            "Georgia"
+        );
     }
 
     #[test]
@@ -1020,13 +1023,22 @@ mod tests {
     #[test]
     fn test_extract_font_name_unknown_font() {
         // Unknown fonts should return default
-        assert_eq!(extract_font_name(Some("Custom Font, sans-serif")), "Georgia");
+        assert_eq!(
+            extract_font_name(Some("Custom Font, sans-serif")),
+            "Georgia"
+        );
     }
 
     #[test]
     fn test_extract_font_name_with_quotes() {
-        assert_eq!(extract_font_name(Some("'JetBrains Mono', monospace")), "Courier New");
-        assert_eq!(extract_font_name(Some("\"Open Sans\", sans-serif")), "Arial");
+        assert_eq!(
+            extract_font_name(Some("'JetBrains Mono', monospace")),
+            "Courier New"
+        );
+        assert_eq!(
+            extract_font_name(Some("\"Open Sans\", sans-serif")),
+            "Arial"
+        );
     }
 
     // ============================================================================
@@ -2060,7 +2072,12 @@ mod tests {
         // Should have multiple progress updates
         assert!(progress_updates.borrow().len() >= 2);
         // Last update should show complete
-        assert!(progress_updates.borrow().last().unwrap().phase.contains("Complete"));
+        assert!(progress_updates
+            .borrow()
+            .last()
+            .unwrap()
+            .phase
+            .contains("Complete"));
     }
 
     #[test]

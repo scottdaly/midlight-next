@@ -1,7 +1,7 @@
 // Error types for Midlight services
 
-use thiserror::Error;
 use crate::traits::object_store::ObjectStoreError;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum MidlightError {

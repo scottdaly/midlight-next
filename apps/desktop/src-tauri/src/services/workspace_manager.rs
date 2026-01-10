@@ -838,10 +838,7 @@ mod tests {
         let result = manager.load_document("test.midlight").await.unwrap();
 
         assert_eq!(result.json["type"], "doc");
-        assert_eq!(
-            result.json["content"][0]["content"][0]["text"],
-            "Hello"
-        );
+        assert_eq!(result.json["content"][0]["content"][0]["text"], "Hello");
     }
 
     #[tokio::test]
@@ -950,7 +947,10 @@ mod tests {
         });
 
         // Save with .md extension
-        manager.save_document("test.md", json, "manual").await.unwrap();
+        manager
+            .save_document("test.md", json, "manual")
+            .await
+            .unwrap();
 
         // Should create .midlight file
         assert!(temp.path().join("test.midlight").exists());
@@ -1055,7 +1055,10 @@ mod tests {
         let manager = WorkspaceManager::new(temp.path());
         manager.init().await.unwrap();
 
-        let checkpoints = manager.get_checkpoints("nonexistent.midlight").await.unwrap();
+        let checkpoints = manager
+            .get_checkpoints("nonexistent.midlight")
+            .await
+            .unwrap();
         assert!(checkpoints.is_empty());
     }
 
@@ -1111,7 +1114,12 @@ mod tests {
         });
 
         let result = manager
-            .create_bookmark("test.midlight", json, "Draft Complete", Some("First complete draft"))
+            .create_bookmark(
+                "test.midlight",
+                json,
+                "Draft Complete",
+                Some("First complete draft"),
+            )
             .await
             .unwrap();
 
@@ -1612,7 +1620,10 @@ mod tests {
         });
 
         // Save without extension
-        manager.save_document("noext", json, "manual").await.unwrap();
+        manager
+            .save_document("noext", json, "manual")
+            .await
+            .unwrap();
 
         // Should create .midlight file
         assert!(temp.path().join("noext.midlight").exists());

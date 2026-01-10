@@ -189,7 +189,10 @@ mod tests {
         assert_eq!(provider.unix_timestamp(), (timestamp + 60 + 300) as i64);
 
         provider.advance_hours(1);
-        assert_eq!(provider.unix_timestamp(), (timestamp + 60 + 300 + 3600) as i64);
+        assert_eq!(
+            provider.unix_timestamp(),
+            (timestamp + 60 + 300 + 3600) as i64
+        );
     }
 
     #[test]

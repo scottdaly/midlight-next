@@ -467,7 +467,10 @@ mod tests {
         assert!(!result);
 
         // Write recovery content
-        manager.write_wal("file.md", "recovery content").await.unwrap();
+        manager
+            .write_wal("file.md", "recovery content")
+            .await
+            .unwrap();
 
         // Different content is unique
         let result = manager
@@ -560,7 +563,10 @@ mod tests {
 
         let unicode_content = "Hello 世界! Привет мир! 🎉 café naïve";
 
-        manager.write_wal("unicode.md", unicode_content).await.unwrap();
+        manager
+            .write_wal("unicode.md", unicode_content)
+            .await
+            .unwrap();
 
         let content = manager.get_recovery_content("unicode.md").await.unwrap();
         assert_eq!(content, Some(unicode_content.to_string()));
@@ -600,7 +606,11 @@ mod tests {
 
         for key in &file_keys {
             manager.write_wal(key, "content").await.unwrap();
-            assert!(manager.has_recovery(key).await, "Recovery should exist for: {}", key);
+            assert!(
+                manager.has_recovery(key).await,
+                "Recovery should exist for: {}",
+                key
+            );
         }
 
         let recoverable = manager.check_for_recovery().await.unwrap();
@@ -724,7 +734,10 @@ mod tests {
         // Sequential writes to different files
         for i in 0..20 {
             let key = format!("concurrent{}.md", i);
-            manager.write_wal(&key, &format!("content {}", i)).await.unwrap();
+            manager
+                .write_wal(&key, &format!("content {}", i))
+                .await
+                .unwrap();
         }
 
         let recoverable = manager.check_for_recovery().await.unwrap();
@@ -742,14 +755,18 @@ mod tests {
         manager.init().await.unwrap();
 
         // Write valid WAL
-        manager.write_wal("valid.md", "valid content").await.unwrap();
+        manager
+            .write_wal("valid.md", "valid content")
+            .await
+            .unwrap();
 
         // Create corrupted WAL file
         let recovery_dir = temp_dir.path().join(".midlight").join("recovery");
         std::fs::write(
             recovery_dir.join("corrupted.wal.json"),
             "not valid json {{{",
-        ).unwrap();
+        )
+        .unwrap();
 
         // check_for_recovery should skip corrupted file but return valid ones
         let recoverable = manager.check_for_recovery().await.unwrap();

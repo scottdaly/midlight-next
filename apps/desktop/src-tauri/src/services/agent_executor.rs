@@ -1970,7 +1970,11 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert_eq!(result[0]["text"], "This is ");
         assert_eq!(result[1]["text"], "bold");
-        assert!(result[1]["marks"].as_array().unwrap().iter().any(|m| m["type"] == "bold"));
+        assert!(result[1]["marks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["type"] == "bold"));
         assert_eq!(result[2]["text"], " text");
     }
 
@@ -2119,7 +2123,11 @@ mod tests {
     async fn test_list_documents_ignores_non_midlight_files() {
         let (temp, executor) = create_test_executor();
 
-        std::fs::write(temp.path().join("doc.midlight"), create_midlight_doc("Midlight")).unwrap();
+        std::fs::write(
+            temp.path().join("doc.midlight"),
+            create_midlight_doc("Midlight"),
+        )
+        .unwrap();
         std::fs::write(temp.path().join("other.txt"), "Plain text").unwrap();
         std::fs::write(temp.path().join("data.json"), "{}").unwrap();
 
@@ -2264,7 +2272,10 @@ mod tests {
             .await;
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("Missing required parameter: path"));
+        assert!(result
+            .error
+            .unwrap()
+            .contains("Missing required parameter: path"));
     }
 
     #[tokio::test]
@@ -2320,7 +2331,10 @@ mod tests {
             .await;
 
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("Missing required parameter: oldPath"));
+        assert!(result
+            .error
+            .unwrap()
+            .contains("Missing required parameter: oldPath"));
     }
 
     #[tokio::test]
@@ -3082,7 +3096,8 @@ mod tests {
         // Could be either directory or document creation failure depending on timing
         let error = result.error.unwrap();
         assert!(
-            error.contains("Failed to create document") || error.contains("Failed to create directory")
+            error.contains("Failed to create document")
+                || error.contains("Failed to create directory")
         );
 
         // Cleanup

@@ -130,10 +130,7 @@ impl FileWatcher {
     }
 
     /// Start watching the workspace with a custom event emitter
-    pub fn start_with_emitter<E: EventEmitter>(
-        &mut self,
-        emitter: Arc<E>,
-    ) -> Result<(), String> {
+    pub fn start_with_emitter<E: EventEmitter>(&mut self, emitter: Arc<E>) -> Result<(), String> {
         if self.watcher.is_some() {
             return Ok(()); // Already watching
         }
@@ -276,7 +273,12 @@ impl FileWatcher {
 
             // Flush pending events periodically
             if last_flush.elapsed() > Duration::from_millis(100) {
-                Self::flush_pending(&*emitter, &workspace_root, &pending_events, debounce_duration);
+                Self::flush_pending(
+                    &*emitter,
+                    &workspace_root,
+                    &pending_events,
+                    debounce_duration,
+                );
                 last_flush = Instant::now();
             }
 
@@ -508,7 +510,9 @@ mod tests {
         let config = FileWatcherConfig::default();
         assert!(config.ignored_patterns.contains(&".git".to_string()));
         assert!(config.ignored_patterns.contains(&".midlight".to_string()));
-        assert!(config.ignored_patterns.contains(&"node_modules".to_string()));
+        assert!(config
+            .ignored_patterns
+            .contains(&"node_modules".to_string()));
         assert!(config.ignored_patterns.contains(&".DS_Store".to_string()));
         assert!(config.ignored_patterns.contains(&"Thumbs.db".to_string()));
     }
@@ -691,7 +695,8 @@ mod tests {
 
     #[test]
     fn test_file_change_event_deserialization() {
-        let json = r#"{"change_type":"create","file_key":"new.md","timestamp":"2024-01-01T00:00:00Z"}"#;
+        let json =
+            r#"{"change_type":"create","file_key":"new.md","timestamp":"2024-01-01T00:00:00Z"}"#;
         let event: FileChangeEvent = serde_json::from_str(json).unwrap();
 
         assert_eq!(event.change_type, "create");
@@ -932,11 +937,7 @@ mod tests {
     fn test_handle_event_ignores_midlight_dir() {
         let temp = TempDir::new().unwrap();
 
-        let midlight_path = temp
-            .path()
-            .join(".midlight")
-            .join("objects")
-            .join("abc123");
+        let midlight_path = temp.path().join(".midlight").join("objects").join("abc123");
         std::fs::create_dir_all(midlight_path.parent().unwrap()).unwrap();
         std::fs::write(&midlight_path, "content").unwrap();
 
@@ -1873,11 +1874,7 @@ mod tests {
     fn test_handle_event_partial_pattern_match() {
         let temp = TempDir::new().unwrap();
         // .git is ignored, but .github should not be (if not in default patterns)
-        let file_path = temp
-            .path()
-            .join(".github")
-            .join("workflows")
-            .join("ci.yml");
+        let file_path = temp.path().join(".github").join("workflows").join("ci.yml");
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
         std::fs::write(&file_path, "content").unwrap();
 
@@ -2165,8 +2162,11 @@ mod tests {
             },
         );
 
-        let events =
-            FileWatcher::collect_ready_events(&mut pending, temp.path(), Duration::from_millis(500));
+        let events = FileWatcher::collect_ready_events(
+            &mut pending,
+            temp.path(),
+            Duration::from_millis(500),
+        );
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].change_type, "modify");
@@ -2188,8 +2188,11 @@ mod tests {
             },
         );
 
-        let events =
-            FileWatcher::collect_ready_events(&mut pending, temp.path(), Duration::from_millis(500));
+        let events = FileWatcher::collect_ready_events(
+            &mut pending,
+            temp.path(),
+            Duration::from_millis(500),
+        );
 
         assert!(events.is_empty());
         assert_eq!(pending.len(), 1);

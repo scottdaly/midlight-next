@@ -2110,10 +2110,7 @@ mod tests {
         let analysis = result.unwrap();
 
         assert_eq!(analysis.total_files, 1);
-        assert_eq!(
-            analysis.files_to_import[0].name,
-            "visible.md".to_string()
-        );
+        assert_eq!(analysis.files_to_import[0].name, "visible.md".to_string());
     }
 
     #[test]
@@ -2630,12 +2627,10 @@ mod tests {
         std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         // Should have recorded an access warning for the unreadable file
-        assert!(
-            analysis
-                .access_warnings
-                .iter()
-                .any(|w| w.path.contains("unreadable.md"))
-        );
+        assert!(analysis
+            .access_warnings
+            .iter()
+            .any(|w| w.path.contains("unreadable.md")));
     }
 
     #[test]
@@ -2687,7 +2682,9 @@ mod tests {
         let source = TempDir::new().unwrap();
         // Create a notion-style file
         std::fs::write(
-            source.path().join("note 12345678901234567890123456789012.md"),
+            source
+                .path()
+                .join("note 12345678901234567890123456789012.md"),
             "content",
         )
         .unwrap();

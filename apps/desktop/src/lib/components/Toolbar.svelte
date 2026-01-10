@@ -771,9 +771,10 @@
       <!-- Pending Changes toggle -->
       <button onclick={() => ui.togglePanelMode('pending')} class="p-1.5 rounded hover:bg-accent relative {$ui.rightPanelMode === 'pending' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}" title="Pending Changes">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 9v4"/>
-          <path d="M12 17h.01"/>
-          <path d="M3.586 14.414A2 2 0 0 0 3 15.828V21a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-5.172a2 2 0 0 0-.586-1.414l-6.293-6.293a2 2 0 0 0-1.414-.586h-1.414a2 2 0 0 0-1.414.586z"/>
+          <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+          <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+          <path d="M9 15h6"/>
+          <path d="M12 18v-6"/>
         </svg>
         {#if $hasPendingChanges}
           <span class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-yellow-500 rounded-full"></span>
@@ -784,7 +785,7 @@
       <button onclick={toggleAnnotations} class="p-1.5 rounded hover:bg-accent {annotationsVisible ? 'bg-accent/50 text-blue-400' : 'text-muted-foreground hover:text-foreground'}" title={annotationsVisible ? 'Hide AI Annotations' : 'Show AI Annotations'}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          <path d="m12 7-1.5 4.5a1.5 1.5 0 0 1-.9.9L5 14l4.6 1.6a1.5 1.5 0 0 1 .9.9L12 21"/>
+          <path d="m12 6-.5 1.5a1 1 0 0 1-.6.6L9 9l1.9.6a1 1 0 0 1 .6.6l.5 1.8.5-1.8a1 1 0 0 1 .6-.6L15 9l-1.9-.6a1 1 0 0 1-.6-.6L12 6Z"/>
         </svg>
       </button>
 

@@ -722,11 +722,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Unauthorized"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Unauthorized"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -746,12 +744,10 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(403).set_body_json(serde_json::json!({
-                    "code": "QUOTA_EXCEEDED",
-                    "message": "Monthly quota exceeded"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "code": "QUOTA_EXCEEDED",
+                "message": "Monthly quota exceeded"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -771,11 +767,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(429).set_body_json(serde_json::json!({
-                    "message": "Too many requests"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                "message": "Too many requests"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -795,11 +789,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(451).set_body_json(serde_json::json!({
-                    "message": "Content violates usage policy"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(451).set_body_json(serde_json::json!({
+                "message": "Content violates usage policy"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -977,11 +969,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "message": "Internal server error"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "message": "Internal server error"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1295,11 +1285,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "message": "Invalid request parameters"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Invalid request parameters"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1319,11 +1307,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(403).set_body_json(serde_json::json!({
-                    "message": "Session expired"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Session expired"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1343,11 +1329,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/llm/models"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "message": "Service unavailable"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "message": "Service unavailable"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1366,11 +1350,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/llm/quota"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Unauthorized"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Unauthorized"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1485,11 +1467,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Unauthorized"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Unauthorized"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1543,7 +1523,8 @@ mod tests {
     async fn test_chat_with_tools_stream_success() {
         let mock_server = MockServer::start().await;
 
-        let sse_body = "data: {\"content\":\"I will help you\"}\n\ndata: {\"done\":true}\n\ndata: [DONE]\n\n";
+        let sse_body =
+            "data: {\"content\":\"I will help you\"}\n\ndata: {\"done\":true}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat-with-tools"))
@@ -1564,7 +1545,9 @@ mod tests {
         };
 
         let (tx, mut rx) = mpsc::channel::<StreamChunk>(10);
-        let result = service.chat_with_tools_stream(request, Some("token"), tx).await;
+        let result = service
+            .chat_with_tools_stream(request, Some("token"), tx)
+            .await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -1585,12 +1568,10 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat-with-tools"))
-            .respond_with(
-                ResponseTemplate::new(403).set_body_json(serde_json::json!({
-                    "code": "QUOTA_EXCEEDED",
-                    "message": "Quota exceeded"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "code": "QUOTA_EXCEEDED",
+                "message": "Quota exceeded"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1677,11 +1658,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat"))
-            .respond_with(
-                ResponseTemplate::new(418).set_body_json(serde_json::json!({
-                    "message": "I'm a teapot"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(418).set_body_json(serde_json::json!({
+                "message": "I'm a teapot"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1887,7 +1866,8 @@ mod tests {
         assert_eq!(chunk.done, None);
         assert!(chunk.usage.is_none());
 
-        let json = r#"{"done":true,"usage":{"promptTokens":10,"completionTokens":5,"totalTokens":15}}"#;
+        let json =
+            r#"{"done":true,"usage":{"promptTokens":10,"completionTokens":5,"totalTokens":15}}"#;
         let chunk: BackendSSEChunk = serde_json::from_str(json).unwrap();
         assert_eq!(chunk.done, Some(true));
         assert!(chunk.usage.is_some());
@@ -2072,11 +2052,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/llm/chat-with-tools"))
-            .respond_with(
-                ResponseTemplate::new(429).set_body_json(serde_json::json!({
-                    "message": "Rate limited"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                "message": "Rate limited"
+            })))
             .mount(&mock_server)
             .await;
 

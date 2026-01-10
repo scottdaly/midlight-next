@@ -14,7 +14,7 @@ pub mod time;
 pub use file_system::{FileSystem, TokioFileSystem};
 pub use http_client::{HttpClient, ReqwestHttpClient};
 pub use object_store::ObjectStoreOps;
-pub use time::{TimeProvider, RealTimeProvider};
+pub use time::{RealTimeProvider, TimeProvider};
 
 #[cfg(test)]
 pub use file_system::MockFileSystem;

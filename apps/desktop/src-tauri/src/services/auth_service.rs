@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::traits::{TimeProvider, RealTimeProvider};
+use crate::traits::{RealTimeProvider, TimeProvider};
 
 const DEFAULT_BASE_URL: &str = "https://midlight.ai";
 const TOKEN_REFRESH_BUFFER_SECS: i64 = 60; // Refresh 60 seconds before expiry
@@ -975,11 +975,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Invalid credentials"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Invalid credentials"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1187,11 +1185,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(429).set_body_json(serde_json::json!({
-                    "message": "Too many requests"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                "message": "Too many requests"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1232,7 +1228,10 @@ mod tests {
         assert_eq!(user.id, 456);
         assert_eq!(user.email, "user@test.com");
         assert!(user.display_name.is_none());
-        assert_eq!(user.avatar_url, Some("https://example.com/avatar.png".to_string()));
+        assert_eq!(
+            user.avatar_url,
+            Some("https://example.com/avatar.png".to_string())
+        );
     }
 
     #[test]
@@ -1323,11 +1322,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/refresh"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Session expired"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Session expired"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1533,11 +1530,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "message": "Internal server error"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "message": "Internal server error"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1557,18 +1552,18 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/signup"))
-            .respond_with(
-                ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                    "message": "Email already exists"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "message": "Email already exists"
+            })))
             .mount(&mock_server)
             .await;
 
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
         let service = create_test_service(&mock_server.uri(), time_provider);
 
-        let result = service.signup("existing@example.com", "password", None).await;
+        let result = service
+            .signup("existing@example.com", "password", None)
+            .await;
 
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -1925,11 +1920,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(403).set_body_json(serde_json::json!({
-                    "message": "Token expired"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Token expired"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1949,11 +1942,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(404).set_body_json(serde_json::json!({
-                    "message": "User not found"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "message": "User not found"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1973,11 +1964,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "message": "Invalid email format"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Invalid email format"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1997,11 +1986,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(418).set_body_json(serde_json::json!({
-                    "message": "I'm a teapot"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(418).set_body_json(serde_json::json!({
+                "message": "I'm a teapot"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -2042,11 +2029,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/login"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "error": "Something went wrong"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "error": "Something went wrong"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -2094,11 +2079,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/refresh"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "message": "Session expired"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "message": "Session expired"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -2210,11 +2193,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/forgot-password"))
-            .respond_with(
-                ResponseTemplate::new(404).set_body_json(serde_json::json!({
-                    "message": "Email not found"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "message": "Email not found"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -2234,18 +2215,18 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/reset-password"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "message": "Invalid token"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Invalid token"
+            })))
             .mount(&mock_server)
             .await;
 
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
         let service = create_test_service(&mock_server.uri(), time_provider);
 
-        let result = service.reset_password("invalid_token", "new_password").await;
+        let result = service
+            .reset_password("invalid_token", "new_password")
+            .await;
 
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -2278,11 +2259,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/auth/exchange"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "message": "Invalid code"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Invalid code"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -3096,11 +3075,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/user/subscription"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "message": "Database error"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "message": "Database error"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -3127,11 +3104,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/api/user/usage"))
-            .respond_with(
-                ResponseTemplate::new(403).set_body_json(serde_json::json!({
-                    "message": "Access denied"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Access denied"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -3158,11 +3133,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/subscription/checkout"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                    "message": "Invalid price ID"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Invalid price ID"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -3189,11 +3162,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/subscription/portal"))
-            .respond_with(
-                ResponseTemplate::new(404).set_body_json(serde_json::json!({
-                    "message": "No subscription found"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "message": "No subscription found"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -3220,11 +3191,9 @@ mod tests {
 
         Mock::given(method("PATCH"))
             .and(path("/api/user/profile"))
-            .respond_with(
-                ResponseTemplate::new(409).set_body_json(serde_json::json!({
-                    "message": "Email already in use"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "message": "Email already in use"
+            })))
             .mount(&mock_server)
             .await;
 

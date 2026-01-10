@@ -10,7 +10,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::error::{MidlightError, Result};
-use crate::traits::{ObjectStoreOps, object_store::ObjectStoreError, object_store::ObjectStoreResult};
+use crate::traits::{
+    object_store::ObjectStoreError, object_store::ObjectStoreResult, ObjectStoreOps,
+};
 use async_trait::async_trait;
 
 /// Content-addressable storage using SHA-256 hashes
@@ -164,12 +166,10 @@ impl ObjectStoreOps for ObjectStore {
     }
 
     async fn read(&self, hash: &str) -> ObjectStoreResult<String> {
-        ObjectStore::read(self, hash)
-            .await
-            .map_err(|e| match e {
-                MidlightError::ObjectNotFound(h) => ObjectStoreError::NotFound(h),
-                other => ObjectStoreError::StorageError(other.to_string()),
-            })
+        ObjectStore::read(self, hash).await.map_err(|e| match e {
+            MidlightError::ObjectNotFound(h) => ObjectStoreError::NotFound(h),
+            other => ObjectStoreError::StorageError(other.to_string()),
+        })
     }
 
     async fn exists(&self, hash: &str) -> bool {
@@ -179,8 +179,7 @@ impl ObjectStoreOps for ObjectStore {
     async fn delete(&self, hash: &str) -> ObjectStoreResult<()> {
         let object_path = self.get_object_path(hash);
         if object_path.exists() {
-            fs::remove_file(object_path)
-                .map_err(|e| ObjectStoreError::IoError(e))
+            fs::remove_file(object_path).map_err(|e| ObjectStoreError::IoError(e))
         } else {
             Err(ObjectStoreError::NotFound(hash.to_string()))
         }
@@ -718,7 +717,10 @@ mod tests {
         store.init().await.unwrap();
 
         // Write valid object to get the path
-        let hash = store.write("valid content that will be truncated").await.unwrap();
+        let hash = store
+            .write("valid content that will be truncated")
+            .await
+            .unwrap();
         let object_path = temp
             .path()
             .join(".midlight")

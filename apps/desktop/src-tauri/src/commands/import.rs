@@ -5,9 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::oneshot;
 
-use crate::services::docx_import::{
-    analyze_docx, import_docx, DocxAnalysis, DocxImportResult,
-};
+use crate::services::docx_import::{analyze_docx, import_docx, DocxAnalysis, DocxImportResult};
 use crate::services::import_service::{
     analyze_notion_export, analyze_obsidian_vault, detect_source_type, import_notion_export,
     import_obsidian_vault, CancellationToken, ImportAnalysis, ImportOptions, ImportProgress,
@@ -211,7 +209,9 @@ pub async fn export_pdf<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
 
 /// Select a DOCX file for import using native dialog
 #[tauri::command]
-pub async fn import_select_docx_file<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+pub async fn import_select_docx_file<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = oneshot::channel();
@@ -269,10 +269,11 @@ pub async fn import_docx_file<R: Runtime>(
 
     // Save images to workspace
     for image in &result.images {
-        let image_path = workspace
-            .join(".midlight")
-            .join("images")
-            .join(format!("{}.{}", &image.id, get_image_extension(&image.content_type)));
+        let image_path = workspace.join(".midlight").join("images").join(format!(
+            "{}.{}",
+            &image.id,
+            get_image_extension(&image.content_type)
+        ));
 
         // Create directory if needed
         if let Some(parent) = image_path.parent() {
@@ -280,7 +281,8 @@ pub async fn import_docx_file<R: Runtime>(
         }
 
         // Write image file
-        std::fs::write(&image_path, &image.data).map_err(|e| format!("Failed to save image: {}", e))?;
+        std::fs::write(&image_path, &image.data)
+            .map_err(|e| format!("Failed to save image: {}", e))?;
     }
 
     // Emit completion event

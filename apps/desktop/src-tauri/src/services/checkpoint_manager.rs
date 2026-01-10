@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::error::{MidlightError, Result};
 use super::object_store::ObjectStore;
-use crate::traits::{ObjectStoreOps, TimeProvider, RealTimeProvider};
+use crate::traits::{ObjectStoreOps, RealTimeProvider, TimeProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -91,11 +91,7 @@ impl CheckpointManager<ObjectStore, RealTimeProvider> {
 impl<O: ObjectStoreOps, T: TimeProvider> CheckpointManager<O, T> {
     /// Create a new CheckpointManager with custom dependencies (for testing)
     #[allow(dead_code)]
-    pub fn with_deps(
-        workspace_root: &Path,
-        object_store: Arc<O>,
-        time_provider: Arc<T>,
-    ) -> Self {
+    pub fn with_deps(workspace_root: &Path, object_store: Arc<O>, time_provider: Arc<T>) -> Self {
         Self {
             checkpoints_dir: workspace_root.join(".midlight").join("checkpoints"),
             object_store,
@@ -431,11 +427,7 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200)); // 2024-01-01
 
-        let manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider,
-        );
+        let manager = CheckpointManager::with_deps(temp.path(), object_store, time_provider);
 
         (temp, manager)
     }
@@ -446,14 +438,7 @@ mod tests {
         manager.init().await.unwrap();
 
         let checkpoint = manager
-            .create_checkpoint(
-                "test.md",
-                "Hello World",
-                "{}",
-                "manual",
-                None,
-                None,
-            )
+            .create_checkpoint("test.md", "Hello World", "{}", "manual", None, None)
             .await
             .unwrap();
 
@@ -525,7 +510,14 @@ mod tests {
 
         // Try to create another immediately (should return existing)
         let cp2 = manager
-            .create_checkpoint("test.md", "Content 2 with changes", "{}", "manual", None, None)
+            .create_checkpoint(
+                "test.md",
+                "Content 2 with changes",
+                "{}",
+                "manual",
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -539,11 +531,8 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // Create first checkpoint
@@ -572,11 +561,8 @@ mod tests {
         // Start 10 days ago
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200 - 10 * 86400));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // Create old checkpoint
@@ -590,7 +576,14 @@ mod tests {
 
         // Create new checkpoint with significant changes
         manager
-            .create_checkpoint("test.md", "New content with lots of additional text to exceed threshold", "{}", "manual", None, None)
+            .create_checkpoint(
+                "test.md",
+                "New content with lots of additional text to exceed threshold",
+                "{}",
+                "manual",
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -606,16 +599,20 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200 - 10 * 86400));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // Create old bookmark - bookmarks bypass interval/threshold checks
         manager
-            .create_checkpoint("test.md", "Old content for bookmark that has enough text", "{}", "bookmark", Some("Important"), None)
+            .create_checkpoint(
+                "test.md",
+                "Old content for bookmark that has enough text",
+                "{}",
+                "bookmark",
+                Some("Important"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -633,7 +630,9 @@ mod tests {
 
         // Both should exist - bookmark is preserved even though it's older than retention
         assert_eq!(checkpoints.len(), 2);
-        assert!(checkpoints.iter().any(|cp| cp.checkpoint_type == "bookmark"));
+        assert!(checkpoints
+            .iter()
+            .any(|cp| cp.checkpoint_type == "bookmark"));
     }
 
     #[tokio::test]
@@ -642,7 +641,14 @@ mod tests {
         manager.init().await.unwrap();
 
         let checkpoint = manager
-            .create_checkpoint("test.md", "# Hello", "{\"key\": \"value\"}", "manual", None, None)
+            .create_checkpoint(
+                "test.md",
+                "# Hello",
+                "{\"key\": \"value\"}",
+                "manual",
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -658,11 +664,8 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // First checkpoint
@@ -677,7 +680,14 @@ mod tests {
         // Second checkpoint - use bookmark trigger to bypass change threshold checks
         let content2 = "Line 1\nLine 2 modified\nLine 3\nLine 4";
         let cp2 = manager
-            .create_checkpoint("test.md", content2, "{}", "bookmark", Some("Compare test"), None)
+            .create_checkpoint(
+                "test.md",
+                content2,
+                "{}",
+                "bookmark",
+                Some("Compare test"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -690,9 +700,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_path_to_key() {
-        assert_eq!(CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("docs/notes.md"), "docs__notes_md");
-        assert_eq!(CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("file.txt"), "file_txt");
-        assert_eq!(CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("a/b/c.md"), "a__b__c_md");
+        assert_eq!(
+            CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("docs/notes.md"),
+            "docs__notes_md"
+        );
+        assert_eq!(
+            CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("file.txt"),
+            "file_txt"
+        );
+        assert_eq!(
+            CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("a/b/c.md"),
+            "a__b__c_md"
+        );
     }
 
     // ============================================================================
@@ -794,7 +813,10 @@ mod tests {
 
         let result = manager.get_checkpoint("test.md", "nonexistent").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Checkpoint not found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Checkpoint not found"));
     }
 
     #[tokio::test]
@@ -807,7 +829,10 @@ mod tests {
             .await
             .unwrap();
 
-        let retrieved = manager.get_checkpoint("test.md", &created.id).await.unwrap();
+        let retrieved = manager
+            .get_checkpoint("test.md", &created.id)
+            .await
+            .unwrap();
         assert_eq!(retrieved.id, created.id);
         assert_eq!(retrieved.content_hash, created.content_hash);
     }
@@ -841,16 +866,20 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // First checkpoint
         let cp1 = manager
-            .create_checkpoint("test.md", "First content with sufficient length for threshold", "{}", "manual", None, None)
+            .create_checkpoint(
+                "test.md",
+                "First content with sufficient length for threshold",
+                "{}",
+                "manual",
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -860,7 +889,14 @@ mod tests {
 
         // Second checkpoint - use bookmark to bypass threshold
         let cp2 = manager
-            .create_checkpoint("test.md", "Second content", "{}", "bookmark", Some("V2"), None)
+            .create_checkpoint(
+                "test.md",
+                "Second content",
+                "{}",
+                "bookmark",
+                Some("V2"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -870,7 +906,14 @@ mod tests {
 
         // Third checkpoint - use bookmark to bypass threshold
         let cp3 = manager
-            .create_checkpoint("test.md", "Third content", "{}", "bookmark", Some("V3"), None)
+            .create_checkpoint(
+                "test.md",
+                "Third content",
+                "{}",
+                "bookmark",
+                Some("V3"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -899,11 +942,8 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // First checkpoint - 100 chars
@@ -931,11 +971,8 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        );
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone());
         manager.init().await.unwrap();
 
         // First checkpoint - 200 chars
@@ -970,7 +1007,14 @@ mod tests {
 
         // Immediately create bookmark (no time advance)
         let cp2 = manager
-            .create_checkpoint("test.md", "Content 2", "{}", "bookmark", Some("Important"), None)
+            .create_checkpoint(
+                "test.md",
+                "Content 2",
+                "{}",
+                "bookmark",
+                Some("Important"),
+                None,
+            )
             .await
             .unwrap();
 
@@ -985,16 +1029,14 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        ).with_config(CheckpointConfig {
-            min_interval_seconds: 1,
-            min_change_threshold: 1,
-            max_checkpoints_per_file: 5,
-            retention_days: 365, // Long retention to avoid age-based removal
-        });
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone())
+                .with_config(CheckpointConfig {
+                    min_interval_seconds: 1,
+                    min_change_threshold: 1,
+                    max_checkpoints_per_file: 5,
+                    retention_days: 365, // Long retention to avoid age-based removal
+                });
         manager.init().await.unwrap();
 
         // Create 10 checkpoints
@@ -1017,23 +1059,28 @@ mod tests {
         let object_store = Arc::new(MockObjectStore::new());
         let time_provider = Arc::new(MockTimeProvider::from_timestamp(1704067200));
 
-        let mut manager = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider.clone(),
-        ).with_config(CheckpointConfig {
-            min_interval_seconds: 1,
-            min_change_threshold: 1,
-            max_checkpoints_per_file: 5,
-            retention_days: 365,
-        });
+        let mut manager =
+            CheckpointManager::with_deps(temp.path(), object_store, time_provider.clone())
+                .with_config(CheckpointConfig {
+                    min_interval_seconds: 1,
+                    min_change_threshold: 1,
+                    max_checkpoints_per_file: 5,
+                    retention_days: 365,
+                });
         manager.init().await.unwrap();
 
         // Create 3 bookmarks
         for i in 0..3 {
             time_provider.advance_secs(2);
             manager
-                .create_checkpoint("test.md", &format!("Bookmark content {}", i), "{}", "bookmark", Some(&format!("BM{}", i)), None)
+                .create_checkpoint(
+                    "test.md",
+                    &format!("Bookmark content {}", i),
+                    "{}",
+                    "bookmark",
+                    Some(&format!("BM{}", i)),
+                    None,
+                )
                 .await
                 .unwrap();
         }
@@ -1042,7 +1089,14 @@ mod tests {
         for i in 0..5 {
             time_provider.advance_secs(2);
             manager
-                .create_checkpoint("test.md", &format!("Auto content {} with extra", i), "{}", "manual", None, None)
+                .create_checkpoint(
+                    "test.md",
+                    &format!("Auto content {} with extra", i),
+                    "{}",
+                    "manual",
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
         }
@@ -1050,7 +1104,10 @@ mod tests {
         let checkpoints = manager.get_checkpoints("test.md").await.unwrap();
 
         // All 3 bookmarks should be preserved
-        let bookmark_count = checkpoints.iter().filter(|cp| cp.checkpoint_type == "bookmark").count();
+        let bookmark_count = checkpoints
+            .iter()
+            .filter(|cp| cp.checkpoint_type == "bookmark")
+            .count();
         assert_eq!(bookmark_count, 3);
     }
 
@@ -1094,11 +1151,7 @@ mod tests {
         }
 
         // Create a new manager (simulating app restart)
-        let mut manager2 = CheckpointManager::with_deps(
-            temp.path(),
-            object_store,
-            time_provider,
-        );
+        let mut manager2 = CheckpointManager::with_deps(temp.path(), object_store, time_provider);
 
         let checkpoints = manager2.get_checkpoints("test.md").await.unwrap();
         assert_eq!(checkpoints.len(), 1);
@@ -1132,7 +1185,9 @@ mod tests {
     #[test]
     fn test_path_to_key_mixed_separators() {
         assert_eq!(
-            CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key("docs/sub\\file.md"),
+            CheckpointManager::<MockObjectStore, MockTimeProvider>::path_to_key(
+                "docs/sub\\file.md"
+            ),
             "docs__sub__file_md"
         );
     }

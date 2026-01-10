@@ -390,7 +390,13 @@ mod mock {
             self.requests.read().unwrap().last().cloned()
         }
 
-        fn record_request(&self, method: &str, url: &str, body: Option<String>, headers: HashMap<String, String>) {
+        fn record_request(
+            &self,
+            method: &str,
+            url: &str,
+            body: Option<String>,
+            headers: HashMap<String, String>,
+        ) {
             self.requests.write().unwrap().push(MockRequest {
                 method: method.to_string(),
                 url: url.to_string(),
@@ -481,8 +487,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_http_client_get() {
-        let client = MockHttpClient::new()
-            .queue_response(HttpResponse::new(200, b"Hello, World!".to_vec()));
+        let client =
+            MockHttpClient::new().queue_response(HttpResponse::new(200, b"Hello, World!".to_vec()));
 
         let response = client.get("https://example.com").await.unwrap();
 

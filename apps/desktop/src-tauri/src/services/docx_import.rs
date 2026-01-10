@@ -17,7 +17,9 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use zip::ZipArchive;
 
-use crate::services::docx_export::{normalize_color_to_hex, TiptapDocument, TiptapMark, TiptapNode};
+use crate::services::docx_export::{
+    normalize_color_to_hex, TiptapDocument, TiptapMark, TiptapNode,
+};
 use crate::services::import_security::ImportConfig;
 
 // ============================================================================
@@ -282,7 +284,9 @@ fn parse_relationships(
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.name().as_ref() == b"Relationship" => {
+            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
+                if e.name().as_ref() == b"Relationship" =>
+            {
                 let mut id = None;
                 let mut target = None;
                 let mut rel_type = None;
@@ -290,8 +294,12 @@ fn parse_relationships(
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"Id" => id = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                        b"Target" => target = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                        b"Type" => rel_type = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                        b"Target" => {
+                            target = Some(String::from_utf8_lossy(&attr.value).to_string())
+                        }
+                        b"Type" => {
+                            rel_type = Some(String::from_utf8_lossy(&attr.value).to_string())
+                        }
                         _ => {}
                     }
                 }
@@ -380,9 +388,9 @@ fn parse_document_xml(
     archive: &mut ZipArchive<BufReader<File>>,
     warnings: &mut Vec<ImportWarning>,
 ) -> Result<(Vec<ParsedParagraph>, ImportStats), DocxImportError> {
-    let doc_file = archive.by_name("word/document.xml").map_err(|_| {
-        DocxImportError::InvalidFormat("Missing word/document.xml".to_string())
-    })?;
+    let doc_file = archive
+        .by_name("word/document.xml")
+        .map_err(|_| DocxImportError::InvalidFormat("Missing word/document.xml".to_string()))?;
 
     let mut reader = Reader::from_reader(BufReader::new(doc_file));
     reader.config_mut().trim_text(true);
@@ -882,7 +890,10 @@ fn convert_runs_to_tiptap(runs: &[TextRun]) -> Vec<TiptapNode> {
             let mut text_style_attrs = serde_json::Map::new();
             if let Some(ref color) = run.props.color {
                 if let Some(normalized) = normalize_color_to_hex(Some(color)) {
-                    text_style_attrs.insert("color".to_string(), serde_json::json!(format!("#{}", normalized)));
+                    text_style_attrs.insert(
+                        "color".to_string(),
+                        serde_json::json!(format!("#{}", normalized)),
+                    );
                 }
             }
             if let Some(ref size) = run.props.font_size {
@@ -1304,7 +1315,11 @@ mod tests {
         let result = convert_runs_to_tiptap(&runs);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].marks.len(), 2);
-        let mark_types: Vec<&str> = result[0].marks.iter().map(|m| m.mark_type.as_str()).collect();
+        let mark_types: Vec<&str> = result[0]
+            .marks
+            .iter()
+            .map(|m| m.mark_type.as_str())
+            .collect();
         assert!(mark_types.contains(&"bold"));
         assert!(mark_types.contains(&"italic"));
     }
@@ -1337,7 +1352,11 @@ mod tests {
         }];
         let result = convert_runs_to_tiptap(&runs);
         assert_eq!(result.len(), 1);
-        let mark_types: Vec<&str> = result[0].marks.iter().map(|m| m.mark_type.as_str()).collect();
+        let mark_types: Vec<&str> = result[0]
+            .marks
+            .iter()
+            .map(|m| m.mark_type.as_str())
+            .collect();
         assert!(mark_types.contains(&"highlight"));
     }
 
@@ -1954,10 +1973,12 @@ mod tests {
         // Add word/_rels/document.xml.rels (empty relationships)
         zip.start_file("word/_rels/document.xml.rels", options)
             .unwrap();
-        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-</Relationships>"#)
-            .unwrap();
+</Relationships>"#,
+        )
+        .unwrap();
 
         zip.finish().unwrap();
     }

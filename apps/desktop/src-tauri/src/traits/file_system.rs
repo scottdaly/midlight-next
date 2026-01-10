@@ -275,21 +275,13 @@ mod mock {
 
             let mut entries: Vec<PathBuf> = files
                 .keys()
-                .filter(|p| {
-                    p.parent()
-                        .map(|parent| parent == path)
-                        .unwrap_or(false)
-                })
+                .filter(|p| p.parent().map(|parent| parent == path).unwrap_or(false))
                 .cloned()
                 .collect();
 
             entries.extend(
                 dirs.iter()
-                    .filter(|p| {
-                        p.parent()
-                            .map(|parent| parent == path)
-                            .unwrap_or(false)
-                    })
+                    .filter(|p| p.parent().map(|parent| parent == path).unwrap_or(false))
                     .cloned(),
             );
 
@@ -298,7 +290,10 @@ mod mock {
 
         async fn rename(&self, from: &Path, to: &Path) -> FsResult<()> {
             if let Some(content) = self.files.write().unwrap().remove(from) {
-                self.files.write().unwrap().insert(to.to_path_buf(), content);
+                self.files
+                    .write()
+                    .unwrap()
+                    .insert(to.to_path_buf(), content);
                 Ok(())
             } else {
                 Err(std::io::Error::new(
@@ -319,7 +314,10 @@ mod mock {
                     std::io::Error::new(std::io::ErrorKind::NotFound, "File not found")
                 })?;
             let len = content.len() as u64;
-            self.files.write().unwrap().insert(to.to_path_buf(), content);
+            self.files
+                .write()
+                .unwrap()
+                .insert(to.to_path_buf(), content);
             Ok(len)
         }
 

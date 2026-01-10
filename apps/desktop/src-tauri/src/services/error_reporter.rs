@@ -685,7 +685,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_complex_message() {
-        let input = "User john@test.com at /Users/john/Documents failed with error from 192.168.0.1";
+        let input =
+            "User john@test.com at /Users/john/Documents failed with error from 192.168.0.1";
         let output = sanitize_message(input);
         assert!(output.contains("[EMAIL]"));
         assert!(output.contains("[REDACTED]"));
