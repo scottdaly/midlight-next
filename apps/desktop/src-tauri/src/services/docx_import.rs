@@ -174,7 +174,7 @@ pub fn import_docx(file_path: &Path) -> Result<DocxImportResult, DocxImportError
     // Validate extension
     if !file_path
         .extension()
-        .map_or(false, |ext| ext.eq_ignore_ascii_case("docx"))
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("docx"))
     {
         return Err(DocxImportError::InvalidFormat(
             "File must have .docx extension".to_string(),
@@ -354,7 +354,7 @@ fn extract_images(
         let content_type = detect_image_type(&data);
 
         // Get original filename
-        let original_name = target.split('/').last().unwrap_or("image").to_string();
+        let original_name = target.split('/').next_back().unwrap_or("image").to_string();
 
         images.push(ExtractedImage {
             id,
@@ -700,7 +700,7 @@ fn is_heading_style(style_id: &Option<String>) -> bool {
                 || lower == "subtitle"
                 || lower.starts_with("h")
                     && lower.len() == 2
-                    && lower.chars().nth(1).map_or(false, |c| c.is_ascii_digit())
+                    && lower.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
         }
         None => false,
     }
@@ -734,6 +734,7 @@ fn highlight_name_to_hex(name: &str) -> String {
 // ============================================================================
 
 /// Convert parsed paragraphs to Tiptap document
+#[allow(clippy::ptr_arg)]
 fn convert_to_tiptap(
     paragraphs: Vec<ParsedParagraph>,
     image_id_map: &HashMap<String, String>,
@@ -930,11 +931,10 @@ fn convert_runs_to_tiptap(runs: &[TextRun]) -> Vec<TiptapNode> {
 
 /// Create a paragraph node
 fn create_paragraph_node(content: Vec<TiptapNode>, props: &ParagraphProperties) -> TiptapNode {
-    let attrs = if let Some(ref align) = props.alignment {
-        Some(serde_json::json!({ "textAlign": align }))
-    } else {
-        None
-    };
+    let attrs = props
+        .alignment
+        .as_ref()
+        .map(|align| serde_json::json!({ "textAlign": align }));
 
     TiptapNode {
         node_type: "paragraph".to_string(),

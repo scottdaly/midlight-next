@@ -179,7 +179,7 @@ impl ObjectStoreOps for ObjectStore {
     async fn delete(&self, hash: &str) -> ObjectStoreResult<()> {
         let object_path = self.get_object_path(hash);
         if object_path.exists() {
-            fs::remove_file(object_path).map_err(|e| ObjectStoreError::IoError(e))
+            fs::remove_file(object_path).map_err(ObjectStoreError::IoError)
         } else {
             Err(ObjectStoreError::NotFound(hash.to_string()))
         }
