@@ -2,6 +2,8 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { settings } from '@midlight/stores';
+  import OfflineIndicator from '$lib/components/OfflineIndicator.svelte';
+  import InstallBanner from '$lib/components/InstallBanner.svelte';
 
   let { children } = $props();
 
@@ -23,6 +25,10 @@
     return unsubscribe;
   });
 </script>
+
+<!-- Global UI Components -->
+<OfflineIndicator />
+<InstallBanner />
 
 <div class="min-h-screen bg-background text-foreground">
   {@render children()}

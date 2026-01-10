@@ -4,6 +4,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Editor from '$lib/components/Editor.svelte';
   import RightSidebar from '$lib/components/RightSidebar.svelte';
+  import SyncStatus from '$lib/components/SyncStatus.svelte';
 
   let sidebarWidth = $state(240);
   let rightSidebarWidth = $state(320);
@@ -27,17 +28,22 @@
   <!-- Main Editor Area -->
   <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
     <!-- Tab Bar -->
-    <div class="h-10 border-b border-border bg-card flex items-center px-2 gap-1">
-      {#if $activeFile}
-        <div class="flex items-center gap-2 px-3 py-1 bg-background rounded text-sm">
-          <span>{$activeFile.name}</span>
-          {#if $fileSystem.isDirty}
-            <span class="w-2 h-2 bg-primary rounded-full"></span>
-          {/if}
-        </div>
-      {:else}
-        <span class="text-muted-foreground text-sm px-3">No file open</span>
-      {/if}
+    <div class="h-10 border-b border-border bg-card flex items-center justify-between px-2">
+      <div class="flex items-center gap-1">
+        {#if $activeFile}
+          <div class="flex items-center gap-2 px-3 py-1 bg-background rounded text-sm">
+            <span>{$activeFile.name}</span>
+            {#if $fileSystem.isDirty}
+              <span class="w-2 h-2 bg-primary rounded-full"></span>
+            {/if}
+          </div>
+        {:else}
+          <span class="text-muted-foreground text-sm px-3">No file open</span>
+        {/if}
+      </div>
+
+      <!-- Sync Status in Tab Bar -->
+      <SyncStatus />
     </div>
 
     <!-- Editor -->

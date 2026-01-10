@@ -31,6 +31,7 @@ export class SyncQueue {
   private db: IDBPDatabase<SyncQueueDB> | null = null;
   private isProcessing = false;
   private processInterval: ReturnType<typeof setInterval> | null = null;
+  private onlineHandler: (() => void) | null = null;
 
   /**
    * Initialize the sync queue database
@@ -156,7 +157,9 @@ export class SyncQueue {
 
     // Also process when coming back online
     if (typeof window !== 'undefined') {
-      window.addEventListener('online', () => this.processQueue());
+      // Store handler reference for cleanup
+      this.onlineHandler = () => this.processQueue();
+      window.addEventListener('online', this.onlineHandler);
     }
   }
 
@@ -167,6 +170,12 @@ export class SyncQueue {
     if (this.processInterval) {
       clearInterval(this.processInterval);
       this.processInterval = null;
+    }
+
+    // Remove online event listener to prevent memory leak
+    if (this.onlineHandler && typeof window !== 'undefined') {
+      window.removeEventListener('online', this.onlineHandler);
+      this.onlineHandler = null;
     }
   }
 

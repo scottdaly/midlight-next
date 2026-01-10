@@ -14,12 +14,14 @@ export interface StorageFactoryResult {
 }
 
 let cachedResult: StorageFactoryResult | null = null;
+let initPromise: Promise<StorageFactoryResult> | null = null;
 
 /**
  * Creates the appropriate storage adapter based on browser capabilities.
  * Uses OPFS if available (best performance), falls back to IndexedDB.
  *
  * The result is cached, so subsequent calls return the same adapter.
+ * Handles concurrent calls by returning the same in-flight promise.
  */
 export async function createStorageAdapter(): Promise<StorageFactoryResult> {
   // Return cached adapter if available
@@ -27,6 +29,26 @@ export async function createStorageAdapter(): Promise<StorageFactoryResult> {
     return cachedResult;
   }
 
+  // Return in-flight promise if initialization is in progress
+  if (initPromise) {
+    return initPromise;
+  }
+
+  // Start initialization and track the promise
+  initPromise = initializeStorageAdapter();
+
+  try {
+    cachedResult = await initPromise;
+    return cachedResult;
+  } finally {
+    initPromise = null;
+  }
+}
+
+/**
+ * Internal initialization logic - separated to enable promise tracking
+ */
+async function initializeStorageAdapter(): Promise<StorageFactoryResult> {
   const capabilities = await detectStorageCapabilities();
 
   let adapter: StorageAdapter;
@@ -51,10 +73,7 @@ export async function createStorageAdapter(): Promise<StorageFactoryResult> {
   // Initialize the adapter
   await adapter.init();
 
-  // Cache the result
-  cachedResult = { adapter, type, capabilities };
-
-  return cachedResult;
+  return { adapter, type, capabilities };
 }
 
 /**

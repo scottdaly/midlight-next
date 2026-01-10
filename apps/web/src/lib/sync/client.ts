@@ -5,6 +5,10 @@ import { auth } from '@midlight/stores';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'https://midlight.ai';
 
+// Request timeout in milliseconds
+const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
+const UPLOAD_TIMEOUT_MS = 60000; // 60 seconds for uploads
+
 export interface SyncDocument {
   id: string;
   path: string;
@@ -120,32 +124,46 @@ class SyncClient {
   }
 
   /**
-   * Make an API request with error handling
+   * Make an API request with error handling and timeout
    */
   private async request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs: number = DEFAULT_TIMEOUT_MS
   ): Promise<T> {
     const authState = get(auth);
     if (!authState.isAuthenticated) {
       throw new Error('Not authenticated');
     }
 
-    const response = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers: {
-        ...this.getHeaders(),
-        ...options.headers,
-      },
-      credentials: 'include',
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers: {
+          ...this.getHeaders(),
+          ...options.headers,
+        },
+        credentials: 'include',
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return response.json();
   }
 
   /**
@@ -170,7 +188,8 @@ class SyncClient {
         {
           method: 'POST',
           body: JSON.stringify({ path, content, sidecar, baseVersion }),
-        }
+        },
+        UPLOAD_TIMEOUT_MS // Use longer timeout for uploads
       );
       return { success: true, document: result.document };
     } catch (error) {
