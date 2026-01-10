@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::oneshot;
 
+use crate::services::docx_import::{
+    analyze_docx, import_docx, DocxAnalysis, DocxImportResult,
+};
 use crate::services::import_service::{
     analyze_notion_export, analyze_obsidian_vault, detect_source_type, import_notion_export,
     import_obsidian_vault, CancellationToken, ImportAnalysis, ImportOptions, ImportProgress,
@@ -200,4 +203,106 @@ pub async fn export_pdf<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
     window.print().map_err(|e| format!("Print failed: {}", e))?;
 
     Ok(true)
+}
+
+// ============================================================================
+// DOCX Import Commands
+// ============================================================================
+
+/// Select a DOCX file for import using native dialog
+#[tauri::command]
+pub async fn import_select_docx_file<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = oneshot::channel();
+
+    app.dialog()
+        .file()
+        .set_title("Select Word Document")
+        .add_filter("Word Documents", &["docx"])
+        .pick_file(move |result| {
+            let _ = tx.send(result);
+        });
+
+    match rx.await {
+        Ok(Some(path)) => Ok(Some(path.to_string())),
+        Ok(None) => Ok(None),
+        Err(_) => Err("Dialog channel closed".into()),
+    }
+}
+
+/// Analyze a DOCX file without importing
+#[tauri::command]
+pub async fn import_analyze_docx(file_path: String) -> Result<DocxAnalysis, String> {
+    let path = PathBuf::from(&file_path);
+
+    tokio::task::spawn_blocking(move || analyze_docx(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| e.to_string())
+}
+
+/// Import a DOCX file into the workspace
+#[tauri::command]
+pub async fn import_docx_file<R: Runtime>(
+    app: AppHandle<R>,
+    file_path: String,
+    workspace_root: String,
+    dest_filename: Option<String>,
+) -> Result<DocxImportResult, String> {
+    let path = PathBuf::from(&file_path);
+    let workspace = PathBuf::from(&workspace_root);
+
+    // Parse DOCX in blocking task
+    let result = tokio::task::spawn_blocking(move || import_docx(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| e.to_string())?;
+
+    // Determine destination filename
+    let base_name = dest_filename.unwrap_or_else(|| {
+        PathBuf::from(&file_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string())
+    });
+
+    // Save images to workspace
+    for image in &result.images {
+        let image_path = workspace
+            .join(".midlight")
+            .join("images")
+            .join(format!("{}.{}", &image.id, get_image_extension(&image.content_type)));
+
+        // Create directory if needed
+        if let Some(parent) = image_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+
+        // Write image file
+        std::fs::write(&image_path, &image.data).map_err(|e| format!("Failed to save image: {}", e))?;
+    }
+
+    // Emit completion event
+    let _ = app.emit(
+        "import-docx-complete",
+        serde_json::json!({
+            "baseName": base_name,
+            "imageCount": result.images.len(),
+            "warningCount": result.warnings.len()
+        }),
+    );
+
+    Ok(result)
+}
+
+/// Get file extension from content type
+fn get_image_extension(content_type: &str) -> &str {
+    match content_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    }
 }

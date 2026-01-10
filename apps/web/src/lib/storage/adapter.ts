@@ -83,11 +83,34 @@ interface MidlightDB {
   };
 }
 
+// Cache entry with TTL
+interface CacheEntry<T> {
+  value: T;
+  timestamp: number;
+}
+
+// Pending write operation
+interface PendingWrite {
+  content: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
 export class WebStorageAdapter implements StorageAdapter {
   private opfsRoot: FileSystemDirectoryHandle | null = null;
   private db: IDBPDatabase<MidlightDB> | null = null;
   private serializer: DocumentSerializer;
   private deserializer: DocumentDeserializer;
+
+  // Handle caches for OPFS optimization
+  private dirHandleCache = new Map<string, CacheEntry<FileSystemDirectoryHandle>>();
+  private fileHandleCache = new Map<string, CacheEntry<FileSystemFileHandle>>();
+  private readonly CACHE_TTL = 60000; // 1 minute cache TTL
+
+  // Write coalescing for rapid saves
+  private pendingWrites = new Map<string, PendingWrite[]>();
+  private writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly WRITE_DEBOUNCE = 100; // 100ms write debounce
 
   constructor() {
     this.serializer = new DocumentSerializer({
@@ -170,6 +193,56 @@ export class WebStorageAdapter implements StorageAdapter {
     return this.ensureDirectory('images');
   }
 
+  // Cache management
+
+  private getCachedDirHandle(path: string): FileSystemDirectoryHandle | null {
+    const entry = this.dirHandleCache.get(path);
+    if (entry && Date.now() - entry.timestamp < this.CACHE_TTL) {
+      return entry.value;
+    }
+    this.dirHandleCache.delete(path);
+    return null;
+  }
+
+  private setCachedDirHandle(path: string, handle: FileSystemDirectoryHandle): void {
+    this.dirHandleCache.set(path, { value: handle, timestamp: Date.now() });
+  }
+
+  private getCachedFileHandle(path: string): FileSystemFileHandle | null {
+    const entry = this.fileHandleCache.get(path);
+    if (entry && Date.now() - entry.timestamp < this.CACHE_TTL) {
+      return entry.value;
+    }
+    this.fileHandleCache.delete(path);
+    return null;
+  }
+
+  private setCachedFileHandle(path: string, handle: FileSystemFileHandle): void {
+    this.fileHandleCache.set(path, { value: handle, timestamp: Date.now() });
+  }
+
+  private invalidateCache(path: string): void {
+    // Invalidate file and any parent directories that might have changed
+    this.fileHandleCache.delete(path);
+    this.fileHandleCache.delete(`${path}.sidecar.json`);
+
+    // For directory operations, invalidate directory cache too
+    const parts = path.split('/').filter(Boolean);
+    let currentPath = '/documents';
+    for (const part of parts) {
+      currentPath = `${currentPath}/${part}`;
+      this.dirHandleCache.delete(currentPath);
+    }
+  }
+
+  /**
+   * Clear all caches - useful when storage may have been modified externally
+   */
+  clearCaches(): void {
+    this.dirHandleCache.clear();
+    this.fileHandleCache.clear();
+  }
+
   // File operations
 
   async readDir(path: string): Promise<FileNode[]> {
@@ -200,13 +273,30 @@ export class WebStorageAdapter implements StorageAdapter {
 
   private async getSubdirectory(
     root: FileSystemDirectoryHandle,
-    path: string
+    path: string,
+    create = false
   ): Promise<FileSystemDirectoryHandle> {
+    // Check cache first
+    const cachePath = `/documents${path}`;
+    const cached = this.getCachedDirHandle(cachePath);
+    if (cached) return cached;
+
     const parts = path.split('/').filter(Boolean);
     let current = root;
+    let currentPath = '/documents';
 
     for (const part of parts) {
-      current = await current.getDirectoryHandle(part);
+      currentPath = `${currentPath}/${part}`;
+
+      // Check cache for intermediate directories
+      const cachedIntermediate = this.getCachedDirHandle(currentPath);
+      if (cachedIntermediate) {
+        current = cachedIntermediate;
+        continue;
+      }
+
+      current = await current.getDirectoryHandle(part, { create });
+      this.setCachedDirHandle(currentPath, current);
     }
 
     return current;
@@ -236,45 +326,120 @@ export class WebStorageAdapter implements StorageAdapter {
   }
 
   async readFile(path: string): Promise<string> {
+    // Check file handle cache first
+    const cachedHandle = this.getCachedFileHandle(path);
+    if (cachedHandle) {
+      const file = await cachedHandle.getFile();
+      return file.text();
+    }
+
     const docsDir = await this.getDocumentsDir();
     const parts = path.split('/').filter(Boolean);
     const fileName = parts.pop()!;
 
-    let dir = docsDir;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part);
-    }
+    // Get parent directory (with caching)
+    const parentPath = '/' + parts.join('/');
+    const dir = parts.length > 0 ? await this.getSubdirectory(docsDir, parentPath) : docsDir;
 
     const fileHandle = await dir.getFileHandle(fileName);
+    this.setCachedFileHandle(path, fileHandle);
+
     const file = await fileHandle.getFile();
     return file.text();
   }
 
   async writeFile(path: string, content: string): Promise<void> {
+    // Use write coalescing to batch rapid writes
+    return new Promise((resolve, reject) => {
+      // Add to pending writes for this path
+      if (!this.pendingWrites.has(path)) {
+        this.pendingWrites.set(path, []);
+      }
+      this.pendingWrites.get(path)!.push({ content, resolve, reject });
+
+      // Clear existing timer
+      const existingTimer = this.writeTimers.get(path);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      // Set new debounce timer
+      const timer = setTimeout(() => {
+        this.flushWrite(path);
+      }, this.WRITE_DEBOUNCE);
+
+      this.writeTimers.set(path, timer);
+    });
+  }
+
+  private async flushWrite(path: string): Promise<void> {
+    const pending = this.pendingWrites.get(path);
+    if (!pending || pending.length === 0) return;
+
+    // Take the last write (most recent content)
+    const lastWrite = pending[pending.length - 1];
+    const allPending = [...pending];
+
+    // Clear pending
+    this.pendingWrites.delete(path);
+    this.writeTimers.delete(path);
+
+    try {
+      await this.writeFileImmediate(path, lastWrite.content);
+
+      // Resolve all pending writes
+      for (const write of allPending) {
+        write.resolve();
+      }
+    } catch (error) {
+      // Reject all pending writes
+      const err = error instanceof Error ? error : new Error('Write failed');
+      for (const write of allPending) {
+        write.reject(err);
+      }
+    }
+  }
+
+  private async writeFileImmediate(path: string, content: string): Promise<void> {
     const docsDir = await this.getDocumentsDir();
     const parts = path.split('/').filter(Boolean);
     const fileName = parts.pop()!;
 
-    let dir = docsDir;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part, { create: true });
+    // Get parent directory (with caching and creation)
+    const parentPath = '/' + parts.join('/');
+    const dir = parts.length > 0 ? await this.getSubdirectory(docsDir, parentPath, true) : docsDir;
+
+    // Check cache for file handle
+    let fileHandle = this.getCachedFileHandle(path);
+    if (!fileHandle) {
+      fileHandle = await dir.getFileHandle(fileName, { create: true });
+      this.setCachedFileHandle(path, fileHandle);
     }
 
-    const fileHandle = await dir.getFileHandle(fileName, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(content);
     await writable.close();
   }
 
+  /**
+   * Force flush all pending writes immediately
+   */
+  async flushAllWrites(): Promise<void> {
+    const paths = Array.from(this.pendingWrites.keys());
+    await Promise.all(paths.map((path) => this.flushWrite(path)));
+  }
+
   async deleteFile(path: string): Promise<void> {
+    // Flush any pending writes for this file
+    await this.flushWrite(path);
+
     const docsDir = await this.getDocumentsDir();
     const parts = path.split('/').filter(Boolean);
     const fileName = parts.pop()!;
 
-    let dir = docsDir;
-    for (const part of parts) {
-      dir = await dir.getDirectoryHandle(part);
-    }
+    // Get parent directory (with caching)
+    const parentPath = '/' + parts.join('/');
+    const dir = parts.length > 0 ? await this.getSubdirectory(docsDir, parentPath) : docsDir;
 
     await dir.removeEntry(fileName);
 
@@ -284,22 +449,32 @@ export class WebStorageAdapter implements StorageAdapter {
     } catch {
       // Sidecar may not exist
     }
+
+    // Invalidate cache
+    this.invalidateCache(path);
   }
 
   async renameFile(oldPath: string, newPath: string): Promise<void> {
+    // Flush any pending writes for old path
+    await this.flushWrite(oldPath);
+
     // OPFS doesn't have native rename, so copy + delete
     const content = await this.readFile(oldPath);
-    await this.writeFile(newPath, content);
+    await this.writeFileImmediate(newPath, content);
 
     // Try to copy sidecar too
     try {
       const sidecarContent = await this.readFile(`${oldPath}.sidecar.json`);
-      await this.writeFile(`${newPath}.sidecar.json`, sidecarContent);
+      await this.writeFileImmediate(`${newPath}.sidecar.json`, sidecarContent);
     } catch {
       // No sidecar
     }
 
     await this.deleteFile(oldPath);
+
+    // Invalidate caches for both paths
+    this.invalidateCache(oldPath);
+    this.invalidateCache(newPath);
   }
 
   async fileExists(path: string): Promise<boolean> {

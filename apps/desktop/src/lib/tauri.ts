@@ -12,6 +12,12 @@ import type {
 } from '@midlight/core/types';
 
 export class TauriStorageAdapter implements StorageAdapter {
+  // Lifecycle
+  async init(): Promise<void> {
+    // No initialization needed for Tauri adapter
+    // Tauri commands are ready immediately
+  }
+
   // File operations
   async readDir(path: string): Promise<FileNode[]> {
     return await invoke('read_dir', { path });

@@ -2,6 +2,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { TiptapDocument } from '@midlight/core/types';
 
 // ============================================================================
 // Types
@@ -93,6 +94,53 @@ export interface ImportResult {
   attachmentsCopied: number;
   errors: ImportErrorInfo[];
   warnings: ImportWarningInfo[];
+}
+
+// ============================================================================
+// DOCX Import Types
+// ============================================================================
+
+export interface DocxAnalysis {
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  paragraphCount: number;
+  headingCount: number;
+  imageCount: number;
+  listCount: number;
+  tableCount: number;
+  hasImages: boolean;
+  estimatedWords: number;
+}
+
+export interface ExtractedImage {
+  id: string;
+  data: number[]; // byte array
+  contentType: string;
+  originalName: string;
+  relId: string;
+}
+
+export interface DocxImportWarning {
+  warningType: string;
+  message: string;
+  details: string | null;
+}
+
+export interface DocxImportStats {
+  paragraphs: number;
+  headings: number;
+  lists: number;
+  images: number;
+  tables: number;
+  formattedRuns: number;
+}
+
+export interface DocxImportResult {
+  tiptapJson: TiptapDocument;
+  images: ExtractedImage[];
+  warnings: DocxImportWarning[];
+  stats: DocxImportStats;
 }
 
 // ============================================================================
@@ -200,6 +248,53 @@ class ImportClient {
     return listen<ImportProgress>('import-progress', (event) => {
       callback(event.payload);
     });
+  }
+
+  // ==========================================================================
+  // DOCX Import Methods
+  // ==========================================================================
+
+  /**
+   * Open file picker dialog for DOCX files
+   */
+  async selectDocxFile(): Promise<string | null> {
+    return invoke<string | null>('import_select_docx_file');
+  }
+
+  /**
+   * Analyze a DOCX file without importing
+   */
+  async analyzeDocx(filePath: string): Promise<DocxAnalysis> {
+    return invoke<DocxAnalysis>('import_analyze_docx', { filePath });
+  }
+
+  /**
+   * Import a DOCX file and return Tiptap JSON
+   */
+  async importDocx(
+    filePath: string,
+    workspaceRoot: string,
+    destFilename?: string
+  ): Promise<DocxImportResult> {
+    return invoke<DocxImportResult>('import_docx_file', {
+      filePath,
+      workspaceRoot,
+      destFilename,
+    });
+  }
+
+  /**
+   * Listen for DOCX import completion events
+   */
+  onDocxComplete(
+    callback: (data: { baseName: string; imageCount: number; warningCount: number }) => void
+  ): Promise<UnlistenFn> {
+    return listen<{ baseName: string; imageCount: number; warningCount: number }>(
+      'import-docx-complete',
+      (event) => {
+        callback(event.payload);
+      }
+    );
   }
 }
 

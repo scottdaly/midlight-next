@@ -11,6 +11,8 @@ mod services;
 
 use std::sync::Arc;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::RwLock;
 
 use commands::error_reporter::ErrorReporterState;
@@ -134,6 +136,10 @@ pub fn run() {
             commands::import::import_obsidian,
             commands::import::import_notion,
             commands::import::import_cancel,
+            // DOCX import commands
+            commands::import::import_select_docx_file,
+            commands::import::import_analyze_docx,
+            commands::import::import_docx_file,
             // Export commands
             commands::import::export_pdf,
             commands::export::export_select_save_path,
@@ -185,6 +191,50 @@ pub fn run() {
                 let menu = menu::create_menu(app.handle())?;
                 app.set_menu(menu)?;
             }
+
+            // Set up system tray icon
+            let show_item = MenuItemBuilder::with_id("show", "Show Midlight").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+            let tray_menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(true)
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .on_menu_event(|_app, _event| {

@@ -2637,22 +2637,30 @@ onMount(() => {
 
 ---
 
-### Phase 8: Desktop Polish (P2)
+### Phase 8: Desktop Polish (P2) ✅ COMPLETE
 
 **Goal:** Desktop-specific features and packaging
 
+**Status:** Completed January 2026
+
 #### Tasks
-1. Implement auto-updater via Tauri plugin
-2. Add native menus (macOS menu bar, Windows overlay)
-3. Configure app signing and notarization
-4. Build installers for all platforms
-5. Set up release pipeline
+1. ✅ Implement auto-updater via Tauri plugin (`tauri-plugin-updater`, `UpdateDialog.svelte`)
+2. ✅ Add native menus (macOS menu bar via `menu.rs`, Windows/Linux via `WindowsMenu.svelte`)
+3. ✅ Configure app signing and notarization (Apple + Azure Trusted Signing in `release.yml`)
+4. ✅ Build installers for all platforms (DMG, MSI, NSIS, AppImage, deb)
+5. ✅ Set up release pipeline (`release.yml` with deploy to midlight.ai/releases/)
+
+#### Bonus Features Implemented
+- ✅ DOCX import with full formatting support
+- ✅ System tray icon with Show/Quit menu
+- ✅ Real-time system theme detection
+- ✅ Window state persistence
 
 #### Success Criteria
-- [ ] App auto-updates on all platforms
-- [ ] Native menus work correctly
-- [ ] App signed and notarized for macOS
-- [ ] Installers work for Windows/macOS/Linux
+- [x] App auto-updates on all platforms
+- [x] Native menus work correctly
+- [x] App signed and notarized for macOS
+- [x] Installers work for Windows/macOS/Linux
 
 ---
 

@@ -4,6 +4,7 @@ pub mod agent_executor;
 pub mod auth_service;
 pub mod checkpoint_manager;
 pub mod docx_export;
+pub mod docx_import;
 pub mod error;
 pub mod error_reporter;
 pub mod file_watcher;

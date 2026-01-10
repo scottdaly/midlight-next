@@ -46,6 +46,7 @@ pub fn create_menu(app: &AppHandle<Wry>) -> Result<Menu<Wry>, tauri::Error> {
                 .accelerator("CmdOrCtrl+O")
                 .build(app)?,
         )
+        .item(&MenuItemBuilder::with_id("import_docx", "Import Word Document...").build(app)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("save", "Save")
@@ -132,6 +133,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
         // File menu
         "new_document" => Some("menu:new-document"),
         "open_workspace" => Some("menu:open-workspace"),
+        "import_docx" => Some("menu:import-docx"),
         "save" => Some("menu:save"),
         "export_docx" => Some("menu:export-docx"),
         "export_pdf" => Some("menu:export-pdf"),

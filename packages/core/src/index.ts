@@ -6,3 +6,4 @@ export * from './utils/index.js';
 export * from './llm/index.js';
 export * from './agent/index.js';
 export * from './subscription/index.js';
+export * from './storage/index.js';

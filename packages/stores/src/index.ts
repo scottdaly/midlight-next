@@ -145,3 +145,39 @@ export {
   windowStateLoaded,
 } from './windowState.js';
 export type { WindowState } from './windowState.js';
+export { storage, formatBytes } from './storage.js';
+export type { StorageState } from './storage.js';
+export {
+  network,
+  isOnline,
+  isOffline,
+  hasPendingSyncs,
+  canSync,
+} from './network.js';
+export type { NetworkState } from './network.js';
+export {
+  pwa,
+  canInstall,
+  isInstalled,
+  showInstallBanner,
+} from './pwa.js';
+export type { PWAState } from './pwa.js';
+export {
+  sync,
+  isSyncEnabled,
+  isSyncing,
+  hasConflicts,
+  conflictCount,
+  syncUsage,
+  lastSyncTime,
+  syncError,
+  syncStatus,
+} from './sync.js';
+export type {
+  SyncDocument,
+  SyncConflict,
+  SyncUsage,
+  LocalDocumentVersion,
+  SyncState,
+  SyncStatusType,
+} from './sync.js';

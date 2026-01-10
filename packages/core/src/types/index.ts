@@ -260,6 +260,9 @@ export interface DocumentChange {
 
 // Storage adapter interface (platform-agnostic)
 export interface StorageAdapter {
+  // Lifecycle
+  init(): Promise<void>;
+
   // File operations
   readDir(path: string): Promise<FileNode[]>;
   readFile(path: string): Promise<string>;

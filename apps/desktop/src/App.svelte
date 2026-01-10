@@ -29,12 +29,15 @@
   import ExternalChangeDialog from '$lib/components/ExternalChangeDialog.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
   import UpdateDialog from '$lib/components/UpdateDialog.svelte';
+  import DocxImportDialog from '$lib/components/DocxImportDialog.svelte';
+  import type { DocxImportResult } from '$lib/import';
 
   let initialized = $state(false);
   let sidebarWidth = $state(240);
   let rightSidebarWidth = $state(320);
   let showAuthModal = $state(false);
   let showUpgradeModal = $state(false);
+  let showDocxImportDialog = $state(false);
   let fileWatcherUnlisten: (() => void) | null = null;
   let currentWatchedWorkspace: string | null = null;
   let menuUnlisteners: UnlistenFn[] = [];
@@ -51,21 +54,40 @@
   });
 
   onMount(() => {
-    // Apply theme
-    const unsubscribe = settings.subscribe(($settings) => {
+    // System theme media query
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    // Function to apply theme based on settings and system preference
+    function applyTheme(settingsTheme: string) {
       const root = document.documentElement;
 
       // Remove all theme classes first
       root.classList.remove(...ALL_THEMES);
 
-      if ($settings.theme === 'system') {
-        // System theme - just use dark class for dark mode preference
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (settingsTheme === 'system') {
+        // System theme - apply dark class based on system preference
+        const prefersDark = systemThemeQuery.matches;
         root.classList.toggle('dark', prefersDark);
       } else {
         // Apply the specific theme class
-        root.classList.add($settings.theme);
+        root.classList.add(settingsTheme);
       }
+    }
+
+    // Listen for system theme changes
+    let currentTheme = get(settings).theme;
+    function handleSystemThemeChange() {
+      // Only re-apply if using system theme
+      if (currentTheme === 'system') {
+        applyTheme('system');
+      }
+    }
+    systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+
+    // Apply theme when settings change
+    const unsubscribe = settings.subscribe(($settings) => {
+      currentTheme = $settings.theme;
+      applyTheme($settings.theme);
     });
 
     // Initialize Tauri storage adapter
@@ -156,6 +178,7 @@
       unsubscribe();
       stopAuthEventListeners();
       window.removeEventListener('focus', handleWindowFocus);
+      systemThemeQuery.removeEventListener('change', handleSystemThemeChange);
     };
   });
 
@@ -263,6 +286,29 @@
     fileSystem.refresh();
   }
 
+  // Handle DOCX import completion - create new document with imported content
+  async function handleDocxImportComplete(result: DocxImportResult, fileName: string) {
+    const fs = get(fileSystem);
+    if (!fs.rootDir) return;
+
+    try {
+      // Create a new file with the base name from the DOCX
+      const baseName = fileName.replace(/\.docx$/i, '');
+      await fileSystem.createFile(fs.rootDir, baseName);
+
+      // Set the imported content after the file is created and active
+      // Small delay to ensure the file is fully loaded
+      setTimeout(() => {
+        fileSystem.setEditorContent(result.tiptapJson);
+        fileSystem.setIsDirty(true); // Mark as dirty so user can save
+        toastStore.success(`Imported "${baseName}" successfully`);
+      }, 100);
+    } catch (error) {
+      console.error('Failed to create document from DOCX import:', error);
+      toastStore.error('Failed to create document from import');
+    }
+  }
+
   // Handle recovering a file's content
   async function handleRecoverFile(fileKey: string, content: string) {
     const fs = get(fileSystem);
@@ -312,6 +358,9 @@
         }
       }),
       listen('menu:open-workspace', () => openFolder()),
+      listen('menu:import-docx', () => {
+        showDocxImportDialog = true;
+      }),
       listen('menu:save', async () => {
         const file = get(activeFile);
         if (file) {
@@ -581,3 +630,13 @@
 
 <!-- Update Dialog -->
 <UpdateDialog />
+
+<!-- DOCX Import Dialog -->
+{#if $fileSystem.rootDir}
+  <DocxImportDialog
+    open={showDocxImportDialog}
+    onClose={() => showDocxImportDialog = false}
+    workspaceRoot={$fileSystem.rootDir}
+    onComplete={handleDocxImportComplete}
+  />
+{/if}
