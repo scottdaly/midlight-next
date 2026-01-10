@@ -1398,8 +1398,8 @@ mod tests {
         // Verify the result structure is valid
         assert!(diff.additions.is_empty() || !diff.additions.is_empty()); // Always true, just verify type
         assert!(diff.deletions.is_empty() || !diff.deletions.is_empty());
-        // change_count reflects the character difference
-        assert!(diff.change_count >= 0);
+        // change_count reflects the character difference (verify field exists)
+        let _ = diff.change_count;
     }
 
     // ============================================

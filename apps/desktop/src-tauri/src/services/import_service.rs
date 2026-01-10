@@ -2530,9 +2530,6 @@ mod tests {
 
     #[test]
     fn test_import_with_progress_callback() {
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
         let source = TempDir::new().unwrap();
         let dest = TempDir::new().unwrap();
         std::fs::create_dir(source.path().join(".obsidian")).unwrap();
@@ -2706,8 +2703,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_notion_analysis_metadata_error() {
-        use std::os::unix::fs::PermissionsExt;
-
         let source = TempDir::new().unwrap();
 
         // Create files that can be listed but not stat'd (difficult to simulate)
@@ -3020,7 +3015,7 @@ mod tests {
         options.convert_csv_to_tables = true;
         options.base.preserve_folder_structure = true;
 
-        let result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
+        let _result = import_notion_export(&analysis, dest.path(), &options, None, None).unwrap();
 
         // CSV should be converted and placed in Data/table.md
         assert!(dest.path().join("Data/table.md").exists());

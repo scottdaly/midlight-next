@@ -2054,7 +2054,8 @@ mod tests {
         assert!(result.is_ok());
 
         let import_result = result.unwrap();
-        assert!(import_result.warnings.is_empty() || import_result.warnings.len() >= 0);
+        // Warnings vector exists (may or may not have warnings)
+        let _ = import_result.warnings.len();
         assert!(import_result.images.is_empty());
     }
 

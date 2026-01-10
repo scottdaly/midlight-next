@@ -1338,7 +1338,7 @@ mod tests {
             marks: vec![],
             attrs: None,
         };
-        let para = create_paragraph(&node);
+        let _para = create_paragraph(&node);
         // Paragraph should be created without errors
         assert!(true); // Just verify it doesn't panic
     }
