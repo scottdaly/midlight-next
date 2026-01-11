@@ -4,6 +4,7 @@
   import ChatPanel from './ChatPanel.svelte';
   import VersionsPanel from './VersionsPanel.svelte';
   import PendingChangesPanel from './Chat/PendingChangesPanel.svelte';
+  import ContextPanel from './ContextPanel.svelte';
 
   interface Props {
     mode?: RightPanelMode;
@@ -34,5 +35,7 @@
     <VersionsPanel />
   {:else if mode === 'pending'}
     <PendingChangesPanel onClose={closePendingPanel} />
+  {:else if mode === 'context'}
+    <ContextPanel />
   {/if}
 </div>

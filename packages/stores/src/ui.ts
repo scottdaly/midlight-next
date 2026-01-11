@@ -2,7 +2,7 @@
 
 import { writable, derived } from 'svelte/store';
 
-export type RightPanelMode = 'chat' | 'versions' | 'pending' | null;
+export type RightPanelMode = 'chat' | 'versions' | 'pending' | 'context' | null;
 
 export interface UIState {
   rightPanelMode: RightPanelMode;
@@ -41,7 +41,7 @@ function createUIStore() {
      * Opens or toggles to a specific panel mode
      * If already showing that mode, closes the panel
      */
-    togglePanelMode(mode: 'chat' | 'versions' | 'pending') {
+    togglePanelMode(mode: 'chat' | 'versions' | 'pending' | 'context') {
       update((s) => ({
         ...s,
         rightPanelMode: s.rightPanelMode === mode ? null : mode,

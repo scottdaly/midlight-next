@@ -300,3 +300,41 @@ export interface SaveResult {
   checkpointId?: string;
   error?: string;
 }
+
+// Project types
+export type ProjectStatus = 'active' | 'paused' | 'archived';
+
+export interface ProjectContextSettings {
+  includeGlobalContext: boolean;
+  autoUpdateContext: boolean;
+  askBeforeUpdating: boolean;
+}
+
+export interface ProjectConfig {
+  version: 1;
+  name: string;
+  icon?: string;           // emoji or icon identifier
+  color?: string;          // hex color for UI accent
+  status: ProjectStatus;
+  createdAt: string;       // ISO date
+  workflowSource?: string; // workflow ID that created this project
+  context: ProjectContextSettings;
+}
+
+// Extended FileNode for projects
+export interface ProjectNode extends FileNode {
+  isProject: true;
+  projectConfig: ProjectConfig;
+}
+
+// Context layer types (for AI context assembly)
+export type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection';
+
+export interface ContextLayer {
+  type: ContextLayerType;
+  enabled: boolean;
+  content: string;
+  source: string;
+  priority: number;
+  tokenCount?: number;
+}

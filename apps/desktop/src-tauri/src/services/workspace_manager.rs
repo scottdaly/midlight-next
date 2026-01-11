@@ -1,5 +1,6 @@
 // Workspace manager - Orchestrates all services for a workspace
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -12,6 +13,42 @@ use super::error::Result;
 use super::object_store::ObjectStore;
 use crate::commands::versions::DiffResult;
 use crate::commands::workspace::{LoadedDocument, SaveResult};
+
+/// Project context settings stored in .project.midlight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectContextSettings {
+    #[serde(rename = "includeGlobalContext")]
+    pub include_global_context: bool,
+    #[serde(rename = "autoUpdateContext")]
+    pub auto_update_context: bool,
+    #[serde(rename = "askBeforeUpdating")]
+    pub ask_before_updating: bool,
+}
+
+/// Project configuration stored in .project.midlight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectConfig {
+    pub version: u32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    pub status: String, // "active" | "paused" | "archived"
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "workflowSource")]
+    pub workflow_source: Option<String>,
+    pub context: ProjectContextSettings,
+}
+
+/// Project information returned to frontend
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectInfo {
+    pub path: String,
+    pub config: ProjectConfig,
+}
 
 /// Manages a single workspace (folder)
 pub struct WorkspaceManager {
@@ -76,6 +113,9 @@ impl WorkspaceManager {
             });
             fs::write(config_path, serde_json::to_string_pretty(&default_config)?)?;
         }
+
+        // Check for me.midlight and create template if not exists
+        self.ensure_me_midlight()?;
 
         tracing::info!("Initialized workspace: {}", self.workspace_root.display());
 
@@ -518,7 +558,350 @@ impl WorkspaceManager {
         })
     }
 
+    // ============================================
+    // Project and Context Methods
+    // ============================================
+
+    /// Ensures me.midlight exists with template content
+    fn ensure_me_midlight(&self) -> Result<()> {
+        let me_path = self.workspace_root.join("me.midlight");
+
+        if me_path.exists() {
+            return Ok(());
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let template = serde_json::json!({
+            "version": 1,
+            "meta": {
+                "created": now,
+                "modified": now,
+                "title": "About Me"
+            },
+            "document": {
+                "defaultFont": "Merriweather",
+                "defaultFontSize": 16
+            },
+            "content": {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 1 },
+                        "content": [{ "type": "text", "text": "About Me" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "Tell the AI about yourself so it can provide more personalized assistance." }]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Basics" }]
+                    },
+                    {
+                        "type": "bulletList",
+                        "content": [
+                            {
+                                "type": "listItem",
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{ "type": "text", "text": "Name: " }]
+                                }]
+                            },
+                            {
+                                "type": "listItem",
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{ "type": "text", "text": "Location: " }]
+                                }]
+                            },
+                            {
+                                "type": "listItem",
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{ "type": "text", "text": "Occupation: " }]
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Interests" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "What topics are you most interested in?" }]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Communication Preferences" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "How would you like the AI to communicate with you? (e.g., formal/casual, detailed/concise)" }]
+                    }
+                ]
+            },
+            "images": {}
+        });
+
+        fs::write(&me_path, serde_json::to_string_pretty(&template)?)?;
+        tracing::info!("Created me.midlight template at {}", me_path.display());
+
+        Ok(())
+    }
+
+    /// Checks if me.midlight exists
+    pub fn has_me_midlight(&self) -> bool {
+        self.workspace_root.join("me.midlight").exists()
+    }
+
+    /// Loads me.midlight content as Markdown for AI context
+    pub fn load_me_midlight_as_context(&self) -> Result<Option<String>> {
+        let me_path = self.workspace_root.join("me.midlight");
+
+        if !me_path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(&me_path)?;
+        let doc: serde_json::Value = serde_json::from_str(&content)?;
+
+        // Extract content and convert to markdown for context
+        if let Some(content) = doc.get("content") {
+            let markdown = self.tiptap_to_markdown(content);
+            Ok(Some(markdown))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Scans workspace for projects (.project.midlight files)
+    pub fn scan_projects(&self) -> Result<Vec<ProjectInfo>> {
+        let mut projects = Vec::new();
+        self.scan_projects_recursive(&self.workspace_root, &mut projects)?;
+        Ok(projects)
+    }
+
+    fn scan_projects_recursive(&self, dir: &Path, projects: &mut Vec<ProjectInfo>) -> Result<()> {
+        let project_file = dir.join(".project.midlight");
+
+        if project_file.exists() {
+            if let Ok(content) = fs::read_to_string(&project_file) {
+                if let Ok(config) = serde_json::from_str::<ProjectConfig>(&content) {
+                    let relative_path = dir
+                        .strip_prefix(&self.workspace_root)
+                        .unwrap_or(dir)
+                        .to_string_lossy()
+                        .to_string();
+
+                    projects.push(ProjectInfo {
+                        path: if relative_path.is_empty() {
+                            ".".to_string()
+                        } else {
+                            relative_path
+                        },
+                        config,
+                    });
+                }
+            }
+        }
+
+        // Recursively scan subdirectories
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Skip hidden directories except .midlight
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with('.') && name != ".midlight" {
+                        continue;
+                    }
+                    self.scan_projects_recursive(&path, projects)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a path is a project (contains .project.midlight)
+    pub fn is_project(&self, relative_path: &str) -> bool {
+        let full_path = self.workspace_root.join(relative_path);
+        full_path.join(".project.midlight").exists()
+    }
+
+    /// Gets project config for a path
+    pub fn get_project_config(&self, relative_path: &str) -> Result<Option<ProjectConfig>> {
+        let project_file = self
+            .workspace_root
+            .join(relative_path)
+            .join(".project.midlight");
+
+        if !project_file.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(&project_file)?;
+        let config: ProjectConfig = serde_json::from_str(&content)?;
+        Ok(Some(config))
+    }
+
+    /// Creates context.midlight with structured template for a project
+    pub fn create_context_template(&self, project_path: &str) -> Result<()> {
+        let context_path = self
+            .workspace_root
+            .join(project_path)
+            .join("context.midlight");
+
+        if context_path.exists() {
+            return Ok(());
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let template = serde_json::json!({
+            "version": 1,
+            "meta": {
+                "created": now,
+                "modified": now,
+                "title": "Project Context"
+            },
+            "document": {
+                "defaultFont": "Merriweather",
+                "defaultFontSize": 16
+            },
+            "content": {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 1 },
+                        "content": [{ "type": "text", "text": "Project Context" }]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Overview" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "Describe the high-level goal and scope of this project." }]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Current Status" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "Where things stand right now." }]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Key Decisions" }]
+                    },
+                    {
+                        "type": "bulletList",
+                        "content": [
+                            {
+                                "type": "listItem",
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{ "type": "text", "text": "[Date]: [Decision description]" }]
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "Open Questions" }]
+                    },
+                    {
+                        "type": "taskList",
+                        "content": [
+                            {
+                                "type": "taskItem",
+                                "attrs": { "checked": false },
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{ "type": "text", "text": "Question 1" }]
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "heading",
+                        "attrs": { "level": 2 },
+                        "content": [{ "type": "text", "text": "AI Notes" }]
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{ "type": "text", "text": "Meta-instructions for how the AI should behave in this project. For example: \"Be concise\" or \"Ask clarifying questions before making suggestions.\"" }]
+                    }
+                ]
+            },
+            "images": {}
+        });
+
+        // Ensure parent directory exists
+        if let Some(parent) = context_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(&context_path, serde_json::to_string_pretty(&template)?)?;
+        tracing::info!("Created context.midlight template at {}", context_path.display());
+
+        Ok(())
+    }
+
+    /// Creates a new project with .project.midlight and context.midlight
+    pub fn create_project(
+        &self,
+        project_path: &str,
+        name: &str,
+        workflow_source: Option<&str>,
+    ) -> Result<ProjectConfig> {
+        let full_path = self.workspace_root.join(project_path);
+
+        // Create directory if it doesn't exist
+        fs::create_dir_all(&full_path)?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let config = ProjectConfig {
+            version: 1,
+            name: name.to_string(),
+            icon: None,
+            color: None,
+            status: "active".to_string(),
+            created_at: now,
+            workflow_source: workflow_source.map(|s| s.to_string()),
+            context: ProjectContextSettings {
+                include_global_context: true,
+                auto_update_context: true,
+                ask_before_updating: false,
+            },
+        };
+
+        let project_file = full_path.join(".project.midlight");
+        fs::write(&project_file, serde_json::to_string_pretty(&config)?)?;
+
+        // Create context.midlight
+        self.create_context_template(project_path)?;
+
+        tracing::info!("Created project at {}", full_path.display());
+
+        Ok(config)
+    }
+
+    // ============================================
     // Helper methods for document conversion
+    // ============================================
 
     fn create_empty_sidecar(&self) -> Value {
         let now = chrono::Utc::now().to_rfc3339();

@@ -781,6 +781,15 @@
         {/if}
       </button>
 
+      <!-- Context Layers toggle -->
+      <button onclick={() => ui.togglePanelMode('context')} class="p-1.5 rounded hover:bg-accent {$ui.rightPanelMode === 'context' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}" title="Context Layers">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>
+          <path d="m22 12.5-8.59 3.91a2 2 0 0 1-1.66 0L2 12"/>
+          <path d="m22 17.5-8.59 3.91a2 2 0 0 1-1.66 0L2 17"/>
+        </svg>
+      </button>
+
       <!-- AI Annotations toggle -->
       <button onclick={toggleAnnotations} class="p-1.5 rounded hover:bg-accent {annotationsVisible ? 'bg-accent/50 text-blue-400' : 'text-muted-foreground hover:text-foreground'}" title={annotationsVisible ? 'Hide AI Annotations' : 'Show AI Annotations'}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

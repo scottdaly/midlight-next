@@ -1,6 +1,7 @@
 // @midlight/stores/fileWatcher - External file change state management
 
 import { writable, derived } from 'svelte/store';
+import { batchCalls } from './utils/performance.js';
 
 // ============================================================================
 // Types
@@ -50,6 +51,45 @@ const initialState: FileWatcherState = {
 function createFileWatcherStore() {
   const { subscribe, set, update } = writable<FileWatcherState>(initialState);
 
+  // Process batched changes - handles rapid file change events efficiently
+  const processBatchedChanges = (changes: ExternalChange[]) => {
+    update((s) => {
+      // Build a map of changes, keeping the most recent for each file
+      const changeMap = new Map<string, ExternalChange>();
+
+      // Start with existing pending changes
+      for (const existing of s.pendingChanges) {
+        changeMap.set(existing.fileKey, existing);
+      }
+
+      // Apply new changes, updating or adding as needed
+      for (const change of changes) {
+        const existing = changeMap.get(change.fileKey);
+        if (existing) {
+          // Update existing: escalate type if needed, update timestamp
+          changeMap.set(change.fileKey, {
+            ...existing,
+            changeType: change.changeType === 'delete' ? 'delete' : existing.changeType,
+            timestamp: change.timestamp,
+            decision: undefined, // Reset decision on new change
+          });
+        } else {
+          changeMap.set(change.fileKey, change);
+        }
+      }
+
+      const newChanges = Array.from(changeMap.values());
+      return {
+        ...s,
+        pendingChanges: newChanges,
+        showDialog: newChanges.length > 0,
+      };
+    });
+  };
+
+  // Batched change adder - accumulates rapid changes and processes them together
+  const batchedAddChange = batchCalls<ExternalChange>(processBatchedChanges, 300);
+
   return {
     subscribe,
 
@@ -78,7 +118,7 @@ function createFileWatcherStore() {
     },
 
     /**
-     * Add a new external change
+     * Add a new external change (immediate processing)
      */
     addChange(change: ExternalChange) {
       update((s) => {
@@ -109,6 +149,14 @@ function createFileWatcherStore() {
           showDialog: newChanges.length > 0,
         };
       });
+    },
+
+    /**
+     * Add a new external change with batching (for rapid file changes)
+     * Useful during git operations or bulk file moves
+     */
+    addChangeBatched(change: ExternalChange) {
+      batchedAddChange(change);
     },
 
     /**

@@ -86,13 +86,14 @@
     }
   }
 
-  type Tab = 'appearance' | 'editor' | 'ai' | 'general' | 'shortcuts';
+  type Tab = 'appearance' | 'editor' | 'ai' | 'context' | 'general' | 'shortcuts';
   let activeTab = $state<Tab>('appearance');
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: 'Appearance' },
     { id: 'editor', label: 'Editor' },
     { id: 'ai', label: 'AI' },
+    { id: 'context', label: 'Context' },
     { id: 'general', label: 'General' },
     { id: 'shortcuts', label: 'Shortcuts' },
   ];
@@ -193,6 +194,12 @@
                   <path d="M20 14h2"></path>
                   <path d="M15 13v2"></path>
                   <path d="M9 13v2"></path>
+                </svg>
+              {:else if tab.id === 'context'}
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M12 16v-4"/>
+                  <path d="M12 8h.01"/>
                 </svg>
               {:else if tab.id === 'general'}
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -571,6 +578,110 @@
                 <p class="text-xs text-muted-foreground">
                   Your session is stored locally and used to authenticate AI requests through the Midlight service.
                 </p>
+              </div>
+            </div>
+          {:else if activeTab === 'context'}
+            <!-- Context Settings -->
+            <div class="space-y-6">
+              <div class="py-2 px-3 bg-muted/50 rounded-md mb-6">
+                <p class="text-xs text-muted-foreground">
+                  Control how Midlight manages context for AI conversations. Context includes your personal information (me.midlight) and project-specific notes (context.midlight).
+                </p>
+              </div>
+
+              <!-- Include Global Context -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Include Global Context</div>
+                  <div class="text-xs text-muted-foreground">Include me.midlight in all AI conversations</div>
+                </div>
+                <button
+                  onclick={() => settings.setIncludeGlobalContext(!$settings.includeGlobalContext)}
+                  role="switch"
+                  aria-checked={$settings.includeGlobalContext}
+                  aria-label="Toggle include global context"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.includeGlobalContext ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.includeGlobalContext ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              <!-- Auto-update Project Context -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Auto-update Project Context</div>
+                  <div class="text-xs text-muted-foreground">AI can update context.midlight with decisions and status changes</div>
+                </div>
+                <button
+                  onclick={() => settings.setAutoUpdateProjectContext(!$settings.autoUpdateProjectContext)}
+                  role="switch"
+                  aria-checked={$settings.autoUpdateProjectContext}
+                  aria-label="Toggle auto-update project context"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.autoUpdateProjectContext ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.autoUpdateProjectContext ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              <!-- Ask Before Saving Context -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Ask Before Saving Context</div>
+                  <div class="text-xs text-muted-foreground">Prompt before AI updates context documents</div>
+                </div>
+                <button
+                  onclick={() => settings.setAskBeforeSavingContext(!$settings.askBeforeSavingContext)}
+                  role="switch"
+                  aria-checked={$settings.askBeforeSavingContext}
+                  aria-label="Toggle ask before saving context"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.askBeforeSavingContext ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.askBeforeSavingContext ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              <!-- Show Context Update Notifications -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Show Context Update Notifications</div>
+                  <div class="text-xs text-muted-foreground">Display a notification when context is updated</div>
+                </div>
+                <button
+                  onclick={() => settings.setShowContextUpdateNotifications(!$settings.showContextUpdateNotifications)}
+                  role="switch"
+                  aria-checked={$settings.showContextUpdateNotifications}
+                  aria-label="Toggle show context update notifications"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.showContextUpdateNotifications ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.showContextUpdateNotifications ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              <!-- Learn About Me Automatically -->
+              <div class="flex items-center justify-between py-3 border-b border-border">
+                <div>
+                  <div class="text-sm font-medium">Learn About Me Automatically</div>
+                  <div class="text-xs text-muted-foreground">AI can update me.midlight based on conversations</div>
+                </div>
+                <button
+                  onclick={() => settings.setLearnAboutMeAutomatically(!$settings.learnAboutMeAutomatically)}
+                  role="switch"
+                  aria-checked={$settings.learnAboutMeAutomatically}
+                  aria-label="Toggle learn about me automatically"
+                  class="relative w-11 h-6 rounded-full transition-colors {$settings.learnAboutMeAutomatically ? 'bg-primary' : 'bg-muted'}"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform {$settings.learnAboutMeAutomatically ? 'translate-x-5' : 'translate-x-0'}"
+                  ></span>
+                </button>
               </div>
             </div>
           {:else if activeTab === 'general'}

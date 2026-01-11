@@ -1,8 +1,9 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { fileSystem, activeFile, selectedPaths, settings, pendingNewItem, pendingChanges } from '@midlight/stores';
-  import type { FileNode } from '@midlight/core/types';
+  import { createVirtualizer } from '@tanstack/svelte-virtual';
+  import { fileSystem, activeFile, selectedPaths, settings, pendingNewItem, pendingChanges, projectPaths, workflowStore, projectStore } from '@midlight/stores';
+  import type { FileNode, ProjectStatus } from '@midlight/core/types';
   import FileContextMenu from './FileContextMenu.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
 
@@ -11,8 +12,17 @@
     expanded?: boolean;
   }
 
+  // Flat node for virtual scrolling - includes depth for indentation
+  interface FlatNode extends TreeNode {
+    depth: number;
+    parentPath: string | null;
+  }
+
   let fileTree = $state<TreeNode[]>([]);
   let expandedPaths = $state<Set<string>>(new Set());
+
+  // Virtual scrolling state
+  let scrollContainer: HTMLDivElement | undefined = $state();
 
   // Pending new item state
   let newItemValue = $state('');
@@ -51,6 +61,9 @@
   let draggedPaths = $state<string[]>([]);
   let dropTargetPath = $state<string | null>(null);
 
+  // Keyboard navigation state
+  let focusedPath = $state<string | null>(null);
+
   // New item dropdown state
   let showNewDropdown = $state(false);
 
@@ -69,19 +82,43 @@
     }));
   });
 
-  // Flatten tree for shift-click range selection
-  function flattenTree(nodes: TreeNode[]): string[] {
-    const result: string[] = [];
+  // Flatten tree for virtual scrolling - returns nodes with depth info
+  function flattenVisibleTree(
+    nodes: TreeNode[],
+    depth = 0,
+    parentPath: string | null = null
+  ): FlatNode[] {
+    const result: FlatNode[] = [];
     for (const node of nodes) {
-      result.push(node.path);
-      if (node.type === 'directory' && node.expanded && node.children) {
-        result.push(...flattenTree(node.children as TreeNode[]));
+      result.push({ ...node, depth, parentPath });
+      if (node.type === 'directory' && expandedPaths.has(node.path) && node.children) {
+        result.push(...flattenVisibleTree(node.children as TreeNode[], depth + 1, node.path));
       }
     }
     return result;
   }
 
-  const flatPaths = $derived(flattenTree(fileTree));
+  // Flattened visible nodes for virtual scrolling
+  const visibleNodes = $derived(flattenVisibleTree(fileTree));
+
+  // Flat paths for shift-click range selection (just paths, not full nodes)
+  const flatPaths = $derived(visibleNodes.map(n => n.path));
+
+  // Virtual scrolling configuration
+  const ROW_HEIGHT = 28; // Height of each row in pixels
+  const OVERSCAN = 10; // Extra rows to render above/below viewport
+
+  // Create virtualizer - recreate when visibleNodes changes
+  const virtualizer = $derived(
+    scrollContainer
+      ? createVirtualizer({
+          count: visibleNodes.length,
+          getScrollElement: () => scrollContainer!,
+          estimateSize: () => ROW_HEIGHT,
+          overscan: OVERSCAN,
+        })
+      : null
+  );
 
   async function openFolder() {
     const selected = await open({
@@ -180,9 +217,73 @@
     }
 
     const selected = $selectedPaths;
-    if (selected.length === 0) return;
-
     const isMeta = event.metaKey || event.ctrlKey;
+
+    // Arrow key navigation for file tree
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const currentPath = selected.length > 0 ? selected[selected.length - 1] : focusedPath;
+      const currentIndex = currentPath ? visibleNodes.findIndex(n => n.path === currentPath) : -1;
+
+      let nextIndex: number;
+      if (event.key === 'ArrowDown') {
+        nextIndex = currentIndex < visibleNodes.length - 1 ? currentIndex + 1 : currentIndex;
+      } else {
+        nextIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+      }
+
+      if (nextIndex >= 0 && nextIndex < visibleNodes.length) {
+        const nextNode = visibleNodes[nextIndex];
+        fileSystem.selectFile(nextNode.path, 'single');
+        focusedPath = nextNode.path;
+
+        // Scroll to the item using virtualizer
+        if (virtualizer && $virtualizer) {
+          $virtualizer.scrollToIndex(nextIndex, { align: 'auto' });
+        }
+      }
+      return;
+    }
+
+    // Arrow right/left for expand/collapse
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      if (selected.length === 1) {
+        event.preventDefault();
+        const node = visibleNodes.find(n => n.path === selected[0]);
+        if (node?.type === 'directory') {
+          if (event.key === 'ArrowRight' && !expandedPaths.has(node.path)) {
+            toggleExpand(node.path);
+          } else if (event.key === 'ArrowLeft' && expandedPaths.has(node.path)) {
+            toggleExpand(node.path);
+          } else if (event.key === 'ArrowLeft' && node.parentPath) {
+            // Navigate to parent
+            fileSystem.selectFile(node.parentPath, 'single');
+            focusedPath = node.parentPath;
+          }
+        } else if (event.key === 'ArrowLeft' && node?.parentPath) {
+          // Navigate to parent for files
+          fileSystem.selectFile(node.parentPath, 'single');
+          focusedPath = node.parentPath;
+        }
+      }
+      return;
+    }
+
+    // Enter to open file or toggle directory
+    if (event.key === 'Enter' && selected.length === 1) {
+      event.preventDefault();
+      const node = visibleNodes.find(n => n.path === selected[0]);
+      if (node) {
+        if (node.type === 'directory') {
+          toggleExpand(node.path);
+        } else if (node.category === 'midlight' || node.category === 'native') {
+          fileSystem.openFile(node);
+        }
+      }
+      return;
+    }
+
+    if (selected.length === 0) return;
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
@@ -482,9 +583,40 @@
     dropTargetPath = null;
   }
 
+  // Check if a path is a project
+  function isProject(path: string): boolean {
+    // Get relative path from workspace root
+    const rootDir = $fileSystem.rootDir || '';
+    let relativePath = path;
+    if (path.startsWith(rootDir)) {
+      relativePath = path.slice(rootDir.length).replace(/^\//, '');
+    }
+    return $projectPaths.has(relativePath) || $projectPaths.has(path);
+  }
+
+  // Get project status for a path
+  function getProjectStatus(path: string): ProjectStatus | null {
+    if (!isProject(path)) return null;
+    return projectStore.getProjectStatus(path);
+  }
+
   // File type icons
-  function getFileIcon(node: TreeNode): { icon: string; color: string } {
+  function getFileIcon(node: TreeNode): { icon: string; color: string; isProject?: boolean; projectStatus?: ProjectStatus | null } {
     if (node.type === 'directory') {
+      // Check if this directory is a project
+      if (isProject(node.path)) {
+        const status = getProjectStatus(node.path);
+        // Archived projects get muted styling
+        if (status === 'archived') {
+          return { icon: 'project', color: 'text-muted-foreground opacity-60', isProject: true, projectStatus: status };
+        }
+        // Paused projects get yellow styling
+        if (status === 'paused') {
+          return { icon: 'project', color: 'text-yellow-500', isProject: true, projectStatus: status };
+        }
+        // Active projects (default)
+        return { icon: 'project', color: 'text-primary', isProject: true, projectStatus: status };
+      }
       return { icon: 'folder', color: 'text-muted-foreground' };
     }
 
@@ -574,6 +706,24 @@
               </svg>
               New Folder
             </button>
+            <div class="h-px bg-border my-1"></div>
+            <button
+              role="menuitem"
+              onclick={() => {
+                showNewDropdown = false;
+                if ($fileSystem.rootDir) {
+                  workflowStore.openPicker($fileSystem.rootDir);
+                }
+              }}
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h16Z"/>
+                <path d="M12 10v6"/>
+                <path d="m9 13 3-3 3 3"/>
+              </svg>
+              New Project...
+            </button>
           </div>
         {/if}
       </div>
@@ -589,9 +739,10 @@
     </div>
   </div>
 
-  <!-- File Tree -->
+  <!-- File Tree with Virtual Scrolling -->
   <div
-    class="flex-1 overflow-auto p-2"
+    bind:this={scrollContainer}
+    class="flex-1 overflow-auto"
     onclick={() => fileSystem.clearSelection()}
     onkeydown={(e) => e.key === 'Escape' && fileSystem.clearSelection()}
     role="tree"
@@ -622,9 +773,38 @@
       </div>
     {/if}
 
-    {#each fileTree as node}
-      {@render fileNode(node, 0)}
-    {/each}
+    <!-- Virtualized file tree -->
+    {#if virtualizer && $virtualizer}
+      {@const virt = $virtualizer}
+      <div
+        style="height: {virt.getTotalSize()}px; width: 100%; position: relative;"
+      >
+        {#each virt.getVirtualItems() as row (visibleNodes[row.index]?.path ?? row.index)}
+          {@const node = visibleNodes[row.index]}
+          {#if node}
+            <div
+              style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: {row.size}px;
+                transform: translateY({row.start}px);
+              "
+            >
+              {@render fileNodeRow(node)}
+            </div>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <!-- Fallback for when virtualizer isn't ready -->
+      <div class="p-2">
+        {#each visibleNodes as node (node.path)}
+          {@render fileNodeRow(node)}
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <!-- Footer with Settings -->
@@ -671,22 +851,24 @@
   onCancel={cancelDelete}
 />
 
-{#snippet fileNode(node: TreeNode, depth: number)}
+{#snippet fileNodeRow(node: FlatNode)}
   {@const iconInfo = getFileIcon(node)}
   {@const isSelected = $selectedPaths.includes(node.path)}
   {@const isDropTarget = dropTargetPath === node.path}
   {@const isDragged = draggedPaths.includes(node.path)}
+  {@const isExpanded = expandedPaths.has(node.path)}
 
   <div
     class="group"
     role="treeitem"
     aria-selected={isSelected}
+    data-path={node.path}
   >
     {#if renamingPath === node.path}
       <!-- Rename input -->
       <div
-        class="flex items-center gap-2 px-2 py-1"
-        style="padding-left: {depth * 12 + 8}px"
+        class="flex items-center gap-2 px-2 h-7"
+        style="padding-left: {node.depth * 12 + 8}px"
       >
         {#if node.type === 'directory'}
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0 text-muted-foreground ml-[18px]">
@@ -720,11 +902,11 @@
         ondragleave={handleDragLeave}
         ondrop={(e) => handleDrop(e, node)}
         ondragend={handleDragEnd}
-        class="w-full flex items-center gap-2 px-2 py-1 text-sm rounded text-left transition-colors
+        class="w-full flex items-center gap-2 px-2 h-7 text-sm rounded text-left transition-colors
           {isSelected ? 'bg-primary/30 text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}
           {isDropTarget ? 'ring-2 ring-primary bg-primary/20' : ''}
           {isDragged ? 'opacity-50' : ''}"
-        style="padding-left: {depth * 12 + 8}px"
+        style="padding-left: {node.depth * 12 + 8}px"
       >
         {#if node.type === 'directory'}
           <!-- Expand/collapse chevron -->
@@ -738,14 +920,23 @@
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
-            class="flex-shrink-0 transition-transform text-muted-foreground {node.expanded ? 'rotate-90' : ''}"
+            class="flex-shrink-0 transition-transform text-muted-foreground {isExpanded ? 'rotate-90' : ''}"
           >
             <polyline points="9 18 15 12 9 6"/>
           </svg>
-          <!-- Folder icon -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0 text-amber-500">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
+          <!-- Folder or Project icon -->
+          {#if iconInfo.isProject}
+            <!-- Project briefcase icon with status-based color -->
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0 {iconInfo.color}">
+              <rect width="20" height="14" x="2" y="7" rx="2" ry="2"/>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+            </svg>
+          {:else}
+            <!-- Regular folder icon -->
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0 text-amber-500">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          {/if}
         {:else}
           <!-- File icon with category-specific color -->
           {#if iconInfo.icon === 'midlight'}
@@ -784,17 +975,16 @@
             </svg>
           {/if}
         {/if}
-        <span class="truncate">{getDisplayName(node)}</span>
+        <span class="truncate {iconInfo.projectStatus === 'archived' ? 'opacity-60' : ''}">{getDisplayName(node)}</span>
+        {#if iconInfo.isProject && iconInfo.projectStatus === 'paused'}
+          <span class="flex-shrink-0 text-xs text-yellow-500" title="Paused project">⏸</span>
+        {:else if iconInfo.isProject && iconInfo.projectStatus === 'archived'}
+          <span class="flex-shrink-0 text-xs text-muted-foreground" title="Archived project">📦</span>
+        {/if}
         {#if node.type === 'file' && hasPendingChangesForPath(node.path)}
           <span class="flex-shrink-0 w-2 h-2 rounded-full bg-yellow-500 ml-1" title="Pending AI changes"></span>
         {/if}
       </button>
-    {/if}
-
-    {#if node.type === 'directory' && node.expanded && node.children}
-      {#each node.children as child}
-        {@render fileNode(child as TreeNode, depth + 1)}
-      {/each}
     {/if}
   </div>
 {/snippet}

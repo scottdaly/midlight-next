@@ -9,6 +9,7 @@ pub mod fs;
 pub mod images;
 pub mod import;
 pub mod llm;
+pub mod rag;
 pub mod recovery;
 pub mod system;
 pub mod updates;

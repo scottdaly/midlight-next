@@ -1,16 +1,29 @@
 <script lang="ts">
-  import { fileSystem } from '@midlight/stores';
+  import { invoke } from '@tauri-apps/api/core';
+  import { fileSystem, projects, activeProjects, pausedProjects } from '@midlight/stores';
   import type { FileNode } from '@midlight/core/types';
+  import type { ProjectInfo } from '@midlight/stores';
+
+  export interface SelectedFile {
+    file: FileNode;
+    projectPath?: string;
+    projectName?: string;
+  }
 
   interface Props {
     query: string;
-    onSelect: (file: FileNode) => void;
+    onSelect: (selection: SelectedFile) => void;
     onClose: () => void;
   }
 
   let { query, onSelect, onClose }: Props = $props();
 
   let selectedIndex = $state(0);
+
+  // State for browsing other projects
+  let browsingProject = $state<ProjectInfo | null>(null);
+  let projectFiles = $state<FileNode[]>([]);
+  let isLoadingProjectFiles = $state(false);
 
   // Flatten file tree for searching
   function flattenFiles(files: FileNode[], result: FileNode[] = []): FileNode[] {
@@ -24,9 +37,31 @@
     return result;
   }
 
-  // Filter files based on query
-  const filteredFiles = $derived(() => {
+  // Get current workspace files
+  const currentWorkspaceFiles = $derived(() => {
     const allFiles = flattenFiles($fileSystem.files);
+    if (!query) return allFiles.slice(0, 8);
+
+    const lowerQuery = query.toLowerCase();
+    return allFiles
+      .filter(f => f.name.toLowerCase().includes(lowerQuery))
+      .slice(0, 8);
+  });
+
+  // Get other projects (not the current workspace)
+  const otherProjects = $derived(() => {
+    const currentRoot = $fileSystem.rootDir;
+    // Show active and paused projects, not archived
+    return [...$activeProjects, ...$pausedProjects].filter(
+      p => p.path !== currentRoot
+    );
+  });
+
+  // Filter project files when browsing a project
+  const filteredProjectFiles = $derived(() => {
+    if (!browsingProject) return [];
+
+    const allFiles = flattenFiles(projectFiles);
     if (!query) return allFiles.slice(0, 10);
 
     const lowerQuery = query.toLowerCase();
@@ -35,13 +70,48 @@
       .slice(0, 10);
   });
 
-  // Reset selected index when filtered files change
+  // Combined items for keyboard navigation
+  const allItems = $derived(() => {
+    if (browsingProject) {
+      return filteredProjectFiles();
+    }
+
+    const items: (FileNode | ProjectInfo)[] = [];
+    items.push(...currentWorkspaceFiles());
+    items.push(...otherProjects());
+    return items;
+  });
+
+  // Reset selected index when items change
   $effect(() => {
-    const files = filteredFiles();
-    if (selectedIndex >= files.length) {
-      selectedIndex = Math.max(0, files.length - 1);
+    const items = allItems();
+    if (selectedIndex >= items.length) {
+      selectedIndex = Math.max(0, items.length - 1);
     }
   });
+
+  // Load files for a project
+  async function loadProjectFiles(project: ProjectInfo) {
+    isLoadingProjectFiles = true;
+    try {
+      // Use Tauri to load the project's file tree
+      const files = await invoke<FileNode[]>('list_files', { path: project.path });
+      projectFiles = files;
+      browsingProject = project;
+      selectedIndex = 0;
+    } catch (error) {
+      console.error('Failed to load project files:', error);
+    } finally {
+      isLoadingProjectFiles = false;
+    }
+  }
+
+  // Go back to project list
+  function goBack() {
+    browsingProject = null;
+    projectFiles = [];
+    selectedIndex = 0;
+  }
 
   // Get display name (without .midlight extension)
   function getDisplayName(file: FileNode): string {
@@ -52,19 +122,38 @@
   }
 
   // Get relative path for display
-  function getRelativePath(file: FileNode): string {
-    if (!$fileSystem.rootDir) return file.path;
-    return file.path.replace($fileSystem.rootDir, '').replace(/^\//, '');
+  function getRelativePath(file: FileNode, rootDir?: string): string {
+    const root = rootDir || $fileSystem.rootDir;
+    if (!root) return file.path;
+    return file.path.replace(root, '').replace(/^\//, '');
+  }
+
+  // Check if item is a project
+  function isProject(item: FileNode | ProjectInfo): item is ProjectInfo {
+    return 'config' in item;
+  }
+
+  // Handle item selection
+  function handleItemClick(item: FileNode | ProjectInfo) {
+    if (isProject(item)) {
+      loadProjectFiles(item);
+    } else {
+      onSelect({
+        file: item,
+        projectPath: browsingProject?.path,
+        projectName: browsingProject?.config.name,
+      });
+    }
   }
 
   // Handle keyboard navigation
   export function handleKeyDown(e: KeyboardEvent): boolean {
-    const files = filteredFiles();
+    const items = allItems();
 
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        selectedIndex = Math.min(selectedIndex + 1, files.length - 1);
+        selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
         return true;
       case 'ArrowUp':
         e.preventDefault();
@@ -72,56 +161,147 @@
         return true;
       case 'Enter':
         e.preventDefault();
-        if (files[selectedIndex]) {
-          onSelect(files[selectedIndex]);
+        if (items[selectedIndex]) {
+          handleItemClick(items[selectedIndex]);
         }
         return true;
       case 'Escape':
         e.preventDefault();
-        onClose();
+        if (browsingProject) {
+          goBack();
+        } else {
+          onClose();
+        }
         return true;
       case 'Tab':
         e.preventDefault();
-        if (files[selectedIndex]) {
-          onSelect(files[selectedIndex]);
+        if (items[selectedIndex] && !isProject(items[selectedIndex])) {
+          handleItemClick(items[selectedIndex]);
         }
         return true;
+      case 'Backspace':
+        if (browsingProject && !query) {
+          e.preventDefault();
+          goBack();
+          return true;
+        }
+        return false;
       default:
         return false;
     }
   }
 </script>
 
-<div class="absolute bottom-full left-0 mb-1 w-80 max-h-64 overflow-auto bg-popover border border-border rounded-lg shadow-lg z-50">
-  {#if filteredFiles().length === 0}
-    <div class="p-3 text-sm text-muted-foreground text-center">
-      No files found
+<div class="absolute bottom-full left-0 mb-1 w-96 max-h-80 overflow-auto bg-popover border border-border rounded-lg shadow-lg z-50">
+  {#if browsingProject}
+    <!-- Browsing inside a project -->
+    <div class="sticky top-0 bg-popover border-b border-border px-3 py-2">
+      <button onclick={goBack} class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 12H5"/>
+          <path d="M12 19l-7-7 7-7"/>
+        </svg>
+        <span>Back to projects</span>
+      </button>
+      <div class="mt-1 text-sm font-medium text-foreground">{browsingProject.config.name}</div>
     </div>
-  {:else}
-    <div class="py-1">
-      <div class="px-3 py-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-        Files
+
+    {#if isLoadingProjectFiles}
+      <div class="p-3 text-sm text-muted-foreground text-center">
+        Loading files...
       </div>
-      {#each filteredFiles() as file, i}
-        <button
-          onclick={() => onSelect(file)}
-          class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent {i === selectedIndex ? 'bg-accent' : ''}"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground flex-shrink-0">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <path d="M14 2v6h6"/>
-          </svg>
-          <div class="min-w-0 flex-1">
-            <div class="text-sm font-medium truncate">{getDisplayName(file)}</div>
-            <div class="text-xs text-muted-foreground truncate">{getRelativePath(file)}</div>
+    {:else if filteredProjectFiles().length === 0}
+      <div class="p-3 text-sm text-muted-foreground text-center">
+        No files found
+      </div>
+    {:else}
+      <div class="py-1">
+        {#each filteredProjectFiles() as file, i}
+          {@const globalIndex = i}
+          <button
+            onclick={() => handleItemClick(file)}
+            class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent {globalIndex === selectedIndex ? 'bg-accent' : ''}"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground flex-shrink-0">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 2v6h6"/>
+            </svg>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium truncate">{getDisplayName(file)}</div>
+              <div class="text-xs text-muted-foreground truncate">{getRelativePath(file, browsingProject.path)}</div>
+            </div>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {:else}
+    <!-- Main view: current files + other projects -->
+    {#if currentWorkspaceFiles().length === 0 && otherProjects().length === 0}
+      <div class="p-3 text-sm text-muted-foreground text-center">
+        No files or projects found
+      </div>
+    {:else}
+      <div class="py-1">
+        <!-- Current workspace files -->
+        {#if currentWorkspaceFiles().length > 0}
+          <div class="px-3 py-1.5 text-xs text-muted-foreground uppercase tracking-wide">
+            Current Workspace
           </div>
-        </button>
-      {/each}
-    </div>
+          {#each currentWorkspaceFiles() as file, i}
+            <button
+              onclick={() => handleItemClick(file)}
+              class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent {i === selectedIndex ? 'bg-accent' : ''}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground flex-shrink-0">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <path d="M14 2v6h6"/>
+              </svg>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium truncate">{getDisplayName(file)}</div>
+                <div class="text-xs text-muted-foreground truncate">{getRelativePath(file)}</div>
+              </div>
+            </button>
+          {/each}
+        {/if}
+
+        <!-- Other projects -->
+        {#if otherProjects().length > 0}
+          <div class="h-px bg-border my-1"></div>
+          <div class="px-3 py-1.5 text-xs text-muted-foreground uppercase tracking-wide">
+            Other Projects
+          </div>
+          {#each otherProjects() as project, i}
+            {@const globalIndex = currentWorkspaceFiles().length + i}
+            <button
+              onclick={() => handleItemClick(project)}
+              class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent {globalIndex === selectedIndex ? 'bg-accent' : ''}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary flex-shrink-0">
+                <rect width="20" height="14" x="2" y="7" rx="2" ry="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium truncate">{project.config.name}</div>
+                <div class="text-xs text-muted-foreground truncate flex items-center gap-1">
+                  {project.path.split('/').pop()}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 18l6-6-6-6"/>
+                  </svg>
+                </div>
+              </div>
+            </button>
+          {/each}
+        {/if}
+      </div>
+    {/if}
   {/if}
+
   <div class="border-t border-border px-3 py-2 text-xs text-muted-foreground flex gap-2">
     <span><kbd class="px-1 bg-muted rounded">↑↓</kbd> navigate</span>
     <span><kbd class="px-1 bg-muted rounded">Enter</kbd> select</span>
+    {#if browsingProject}
+      <span><kbd class="px-1 bg-muted rounded">←</kbd> back</span>
+    {/if}
     <span><kbd class="px-1 bg-muted rounded">Esc</kbd> close</span>
   </div>
 </div>

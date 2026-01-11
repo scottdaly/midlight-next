@@ -5,7 +5,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth, recoveryStore, clearAllWalWrites, toastStore, fileWatcherStore, shortcuts } from '@midlight/stores';
+  import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth, recoveryStore, clearAllWalWrites, toastStore, fileWatcherStore, shortcuts, contextUpdateStore, workflowStore, rag } from '@midlight/stores';
   import type { Shortcut } from '@midlight/stores';
   import { TauriStorageAdapter } from '$lib/tauri';
   import { createTauriLLMClient } from '$lib/llm';
@@ -30,6 +30,9 @@
   import ToastContainer from '$lib/components/ToastContainer.svelte';
   import UpdateDialog from '$lib/components/UpdateDialog.svelte';
   import DocxImportDialog from '$lib/components/DocxImportDialog.svelte';
+  import ContextUpdateDialog from '$lib/components/ContextUpdateDialog.svelte';
+  import WorkflowPicker from '$lib/components/WorkflowPicker.svelte';
+  import WorkflowWizard from '$lib/components/WorkflowWizard.svelte';
   import type { DocxImportResult } from '$lib/import';
 
   let initialized = $state(false);
@@ -149,6 +152,15 @@
 
         // Initialize auto-updates (checks for updates after 10s delay)
         await updatesClient.init();
+
+        // Initialize context update store with loaders
+        initializeContextUpdateStore();
+
+        // Initialize workflow store with file system and LLM
+        initializeWorkflowStore();
+
+        // Initialize RAG store with Tauri implementations
+        initializeRAGStore();
       } catch (error) {
         console.error('Failed to initialize:', error);
         // Report initialization error (if reporting is enabled)
@@ -444,6 +456,180 @@
     }
   }
 
+  // Initialize context update store with platform-specific loaders
+  function initializeContextUpdateStore() {
+    // Context loader - reads context.midlight from project directory
+    contextUpdateStore.setContextLoader(async (projectPath: string): Promise<string | null> => {
+      try {
+        const contextPath = `${projectPath}/context.midlight`;
+        const content = await invoke<string>('read_file', { path: contextPath });
+        return content;
+      } catch (error) {
+        // File may not exist, which is fine
+        console.debug('Failed to load context (file may not exist):', error);
+        return null;
+      }
+    });
+
+    // Wire up context update hook in AI store
+    ai.setContextUpdateHook(async (projectPath, userMessage, assistantResponse) => {
+      await contextUpdateStore.evaluateForUpdates(projectPath, userMessage, assistantResponse);
+    });
+
+    // Context saver - writes context.midlight to project directory
+    contextUpdateStore.setContextSaver(async (projectPath: string, content: string): Promise<void> => {
+      try {
+        const contextPath = `${projectPath}/context.midlight`;
+        await invoke('write_file', { path: contextPath, content });
+      } catch (error) {
+        console.error('Failed to save context:', error);
+        throw error;
+      }
+    });
+
+    // LLM call for context extraction - uses a fast model
+    contextUpdateStore.setExtractionLLMCall(async (prompt: string): Promise<string> => {
+      const accessToken = await authClient.getAccessToken();
+      if (!accessToken) {
+        throw new Error('Not authenticated');
+      }
+
+      // Use a smaller/faster model for extraction
+      const response = await fetch('https://midlight.ai/api/llm/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0,
+          max_tokens: 1000,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`LLM call failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || '';
+    });
+
+    // Sync settings to context update store
+    const settingsUnsubscribe = settings.subscribe(($settings) => {
+      contextUpdateStore.updateSettings({
+        autoUpdate: $settings.autoUpdateProjectContext,
+        askBeforeUpdating: $settings.askBeforeSavingContext,
+        showNotifications: $settings.showContextUpdateNotifications,
+      });
+    });
+
+    // Show toast notification when context is successfully updated
+    const contextUnsubscribe = contextUpdateStore.subscribe(($state) => {
+      if ($state.lastUpdateAt && contextUpdateStore.shouldShowNotification()) {
+        // Check if this is a new update (not shown before)
+        const lastShown = localStorage.getItem('lastContextUpdateNotification');
+        if (lastShown !== $state.lastUpdateAt) {
+          localStorage.setItem('lastContextUpdateNotification', $state.lastUpdateAt);
+          toastStore.success('Project context updated');
+        }
+      }
+    });
+
+    // Return cleanup function (though we don't have a good way to call it in Svelte 5)
+    return () => {
+      settingsUnsubscribe();
+      contextUnsubscribe();
+    };
+  }
+
+  // Initialize RAG store with Tauri implementations
+  function initializeRAGStore() {
+    rag.setImplementation({
+      indexer: async (projectPath: string, force?: boolean) => {
+        const accessToken = await authClient.getAccessToken();
+        if (!accessToken) {
+          throw new Error('Not authenticated');
+        }
+        return invoke('rag_index_project', {
+          projectPath,
+          authToken: accessToken,
+          force: force ?? false,
+        });
+      },
+      searcher: async (query: string, options?: { topK?: number; minScore?: number; projectPaths?: string[] }) => {
+        const accessToken = await authClient.getAccessToken();
+        if (!accessToken) {
+          throw new Error('Not authenticated');
+        }
+        return invoke('rag_search', {
+          query,
+          authToken: accessToken,
+          topK: options?.topK,
+          minScore: options?.minScore,
+          projectPaths: options?.projectPaths,
+        });
+      },
+      statusGetter: async (projectPath?: string) => {
+        return invoke('rag_get_status', { projectPath });
+      },
+      indexDeleter: async (projectPath: string) => {
+        return invoke('rag_delete_index', { projectPath });
+      },
+    });
+  }
+
+  // Initialize workflow store with platform-specific implementations
+  function initializeWorkflowStore() {
+    // File system implementation for workflow execution
+    workflowStore.setFileSystem({
+      async createDirectory(path: string) {
+        await invoke('create_folder', { path });
+      },
+      async writeFile(path: string, content: string) {
+        await invoke('write_file', { path, content });
+      },
+      async exists(path: string) {
+        return invoke<boolean>('file_exists', { path });
+      },
+      join(...paths: string[]) {
+        // Simple path join - works for both Unix and Windows
+        return paths.join('/').replace(/\/+/g, '/');
+      },
+    });
+
+    // LLM call implementation for content generation
+    workflowStore.setLLMCall(async (prompt: string): Promise<string> => {
+      const accessToken = await authClient.getAccessToken();
+      if (!accessToken) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await fetch('https://midlight.ai/api/llm/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7,
+          max_tokens: 2000,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`LLM call failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || '';
+    });
+  }
+
   // Register app-level shortcuts
   function registerShortcuts() {
     const appShortcuts: Shortcut[] = [
@@ -640,3 +826,10 @@
     onComplete={handleDocxImportComplete}
   />
 {/if}
+
+<!-- Context Update Dialog -->
+<ContextUpdateDialog />
+
+<!-- Workflow Components -->
+<WorkflowPicker />
+<WorkflowWizard />

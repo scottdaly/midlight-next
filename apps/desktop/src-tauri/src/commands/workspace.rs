@@ -1,6 +1,7 @@
 // Workspace commands - Document loading, saving, and versioning
 
 use crate::services::checkpoint_manager::Checkpoint;
+use crate::services::workspace_manager::ProjectInfo;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -143,5 +144,34 @@ pub async fn workspace_create_bookmark(
             .map_err(|e| e.to_string())
     } else {
         Err("Workspace not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn workspace_scan_projects(
+    workspace_root: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ProjectInfo>, String> {
+    let registry = state.workspace_registry.read().await;
+
+    if let Some(manager) = registry.get(&workspace_root) {
+        manager.scan_projects().map_err(|e| e.to_string())
+    } else {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
+pub async fn workspace_is_project(
+    workspace_root: String,
+    relative_path: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let registry = state.workspace_registry.read().await;
+
+    if let Some(manager) = registry.get(&workspace_root) {
+        Ok(manager.is_project(&relative_path))
+    } else {
+        Ok(false)
     }
 }

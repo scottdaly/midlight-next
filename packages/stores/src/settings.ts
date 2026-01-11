@@ -26,6 +26,16 @@ export interface SettingsState {
   showLineNumbers: boolean;
   errorReportingEnabled: boolean;
   apiKey: string;
+
+  // Storage Settings
+  rootFolderLocation: string;
+
+  // Context Settings
+  autoUpdateProjectContext: boolean;
+  askBeforeSavingContext: boolean;
+  showContextUpdateNotifications: boolean;
+  learnAboutMeAutomatically: boolean;
+  includeGlobalContext: boolean;
 }
 
 const defaultSettings: SettingsState = {
@@ -40,6 +50,16 @@ const defaultSettings: SettingsState = {
   showLineNumbers: false,
   errorReportingEnabled: false, // Opt-in only for privacy
   apiKey: '',
+
+  // Storage defaults
+  rootFolderLocation: '', // Empty means use default (Documents/Midlight/)
+
+  // Context defaults (per vision document)
+  autoUpdateProjectContext: true,
+  askBeforeSavingContext: false,
+  showContextUpdateNotifications: false,
+  learnAboutMeAutomatically: true,
+  includeGlobalContext: true,
 };
 
 // Try to load persisted settings
@@ -149,6 +169,48 @@ function createSettingsStore() {
      */
     setApiKey(apiKey: string) {
       update((s) => ({ ...s, apiKey }));
+    },
+
+    /**
+     * Sets root folder location
+     */
+    setRootFolderLocation(location: string) {
+      update((s) => ({ ...s, rootFolderLocation: location }));
+    },
+
+    /**
+     * Sets auto-update project context
+     */
+    setAutoUpdateProjectContext(enabled: boolean) {
+      update((s) => ({ ...s, autoUpdateProjectContext: enabled }));
+    },
+
+    /**
+     * Sets ask before saving context
+     */
+    setAskBeforeSavingContext(enabled: boolean) {
+      update((s) => ({ ...s, askBeforeSavingContext: enabled }));
+    },
+
+    /**
+     * Sets show context update notifications
+     */
+    setShowContextUpdateNotifications(enabled: boolean) {
+      update((s) => ({ ...s, showContextUpdateNotifications: enabled }));
+    },
+
+    /**
+     * Sets learn about me automatically
+     */
+    setLearnAboutMeAutomatically(enabled: boolean) {
+      update((s) => ({ ...s, learnAboutMeAutomatically: enabled }));
+    },
+
+    /**
+     * Sets include global context
+     */
+    setIncludeGlobalContext(enabled: boolean) {
+      update((s) => ({ ...s, includeGlobalContext: enabled }));
     },
 
     /**

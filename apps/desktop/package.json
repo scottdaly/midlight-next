@@ -16,6 +16,7 @@
     "@midlight/core": "workspace:*",
     "@midlight/stores": "workspace:*",
     "@midlight/ui": "workspace:*",
+    "@tanstack/svelte-virtual": "^3.13.18",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",

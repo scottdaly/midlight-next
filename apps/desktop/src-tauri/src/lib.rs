@@ -90,6 +90,8 @@ pub fn run() {
             commands::workspace::workspace_get_checkpoints,
             commands::workspace::workspace_restore_checkpoint,
             commands::workspace::workspace_create_bookmark,
+            commands::workspace::workspace_scan_projects,
+            commands::workspace::workspace_is_project,
             // Version commands
             commands::versions::get_checkpoints,
             commands::versions::restore_checkpoint,
@@ -175,6 +177,11 @@ pub fn run() {
             commands::updates::check_for_updates,
             commands::updates::download_and_install_update,
             commands::updates::get_current_version,
+            // RAG commands
+            commands::rag::rag_index_project,
+            commands::rag::rag_search,
+            commands::rag::rag_get_status,
+            commands::rag::rag_delete_index,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

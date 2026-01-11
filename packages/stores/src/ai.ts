@@ -25,7 +25,34 @@ export interface ContextItem {
   path?: string;
   content?: string;
   label: string;
+  /** Path to the project root (for cross-project references) */
+  projectPath?: string;
+  /** Display name of the project (from .project.midlight) */
+  projectName?: string;
 }
+
+// Context layer types for hierarchical context assembly
+export type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection';
+
+export interface ContextLayer {
+  type: ContextLayerType;
+  enabled: boolean;
+  content: string;
+  source: string;
+  priority: number;
+  tokenEstimate?: number;
+}
+
+// Context loaders (injected from platform layer)
+export type GlobalContextLoader = () => Promise<string | null>;
+export type ProjectContextLoader = (projectPath: string) => Promise<string | null>;
+
+// Context update hook (called after AI responses for potential context updates)
+export type ContextUpdateHook = (
+  projectPath: string,
+  userMessage: string,
+  assistantResponse: string
+) => Promise<void>;
 
 export interface InlineEditState {
   isActive: boolean;
@@ -54,6 +81,12 @@ export interface AIState {
   agentEnabled: boolean;
   workspaceRoot: string | null;
   inlineEdit: InlineEditState;
+
+  // Context hierarchy (Phase 2)
+  freshStartMode: boolean;
+  currentProjectPath: string | null;
+  contextLayers: ContextLayer[];
+  includeGlobalContext: boolean;
 }
 
 // Tool executor function type (injected from platform layer)
@@ -88,6 +121,12 @@ const initialState: AIState = {
     selectionTo: 0,
     isGenerating: false,
   },
+
+  // Context hierarchy (Phase 2)
+  freshStartMode: false,
+  currentProjectPath: null,
+  contextLayers: [],
+  includeGlobalContext: true,
 };
 
 function createAIStore() {
@@ -101,6 +140,13 @@ function createAIStore() {
 
   // Callback for when files are changed by agent (receives the changed file path)
   let onFileChange: ((path: string) => void) | null = null;
+
+  // Context loaders (set by platform-specific initialization)
+  let globalContextLoader: GlobalContextLoader | null = null;
+  let projectContextLoader: ProjectContextLoader | null = null;
+
+  // Context update hook (called after AI responses)
+  let contextUpdateHook: ContextUpdateHook | null = null;
 
   return {
     subscribe,
@@ -134,10 +180,200 @@ function createAIStore() {
     },
 
     /**
+     * Sets the global context loader (for me.midlight)
+     */
+    setGlobalContextLoader(loader: GlobalContextLoader) {
+      globalContextLoader = loader;
+    },
+
+    /**
+     * Sets the project context loader (for context.midlight)
+     */
+    setProjectContextLoader(loader: ProjectContextLoader) {
+      projectContextLoader = loader;
+    },
+
+    /**
+     * Sets the context update hook (called after AI responses)
+     */
+    setContextUpdateHook(hook: ContextUpdateHook) {
+      contextUpdateHook = hook;
+    },
+
+    /**
      * Sets the workspace root path
      */
     setWorkspaceRoot(path: string | null) {
       update((s) => ({ ...s, workspaceRoot: path }));
+    },
+
+    /**
+     * Sets the current project path (relative to workspace)
+     */
+    setCurrentProjectPath(path: string | null) {
+      update((s) => ({ ...s, currentProjectPath: path }));
+    },
+
+    /**
+     * Enables or disables Fresh Start mode (ignores global and project context)
+     */
+    setFreshStartMode(enabled: boolean) {
+      update((s) => ({ ...s, freshStartMode: enabled }));
+    },
+
+    /**
+     * Toggles Fresh Start mode
+     */
+    toggleFreshStartMode() {
+      update((s) => ({ ...s, freshStartMode: !s.freshStartMode }));
+    },
+
+    /**
+     * Sets whether to include global context (me.midlight)
+     */
+    setIncludeGlobalContext(enabled: boolean) {
+      update((s) => ({ ...s, includeGlobalContext: enabled }));
+    },
+
+    /**
+     * Detects if a message contains fresh start intent
+     */
+    detectFreshStartIntent(message: string): boolean {
+      const triggers = [
+        /ignore (previous |prior )?context/i,
+        /fresh (start|perspective)/i,
+        /without (the )?(history|context)/i,
+        /start fresh/i,
+        /forget (everything|what you know)/i,
+        /clean slate/i,
+      ];
+      return triggers.some((t) => t.test(message));
+    },
+
+    /**
+     * Assembles context layers for AI request
+     * Returns layers in priority order (global -> project -> document -> mentions -> selection)
+     */
+    async assembleContextLayers(): Promise<ContextLayer[]> {
+      const state = get({ subscribe });
+      const layers: ContextLayer[] = [];
+
+      // Skip global and project context if in Fresh Start mode
+      const skipPersistentContext = state.freshStartMode;
+
+      // Layer 1: Global context (me.midlight) - priority 1
+      if (!skipPersistentContext && state.includeGlobalContext && globalContextLoader) {
+        try {
+          const globalContent = await globalContextLoader();
+          if (globalContent) {
+            layers.push({
+              type: 'global',
+              enabled: true,
+              content: globalContent,
+              source: 'me.midlight',
+              priority: 1,
+              tokenEstimate: Math.ceil(globalContent.length / 4),
+            });
+          }
+        } catch (err) {
+          console.warn('[AI] Failed to load global context:', err);
+        }
+      }
+
+      // Layer 2: Project context (context.midlight) - priority 2
+      if (!skipPersistentContext && state.currentProjectPath && projectContextLoader) {
+        try {
+          const projectContent = await projectContextLoader(state.currentProjectPath);
+          if (projectContent) {
+            layers.push({
+              type: 'project',
+              enabled: true,
+              content: projectContent,
+              source: `${state.currentProjectPath}/context.midlight`,
+              priority: 2,
+              tokenEstimate: Math.ceil(projectContent.length / 4),
+            });
+          }
+        } catch (err) {
+          console.warn('[AI] Failed to load project context:', err);
+        }
+      }
+
+      // Layer 3: Current document - priority 3
+      if (state.currentDocumentContext) {
+        layers.push({
+          type: 'document',
+          enabled: true,
+          content: state.currentDocumentContext,
+          source: 'current document',
+          priority: 3,
+          tokenEstimate: Math.ceil(state.currentDocumentContext.length / 4),
+        });
+      }
+
+      // Layer 4: @-mentioned files - priority 4
+      for (const item of state.contextItems) {
+        if (item.content) {
+          layers.push({
+            type: 'mentioned',
+            enabled: true,
+            content: item.content,
+            source: item.path || item.label,
+            priority: 4,
+            tokenEstimate: Math.ceil(item.content.length / 4),
+          });
+        }
+      }
+
+      // Layer 5: Selection - priority 5
+      if (state.selectionContext) {
+        layers.push({
+          type: 'selection',
+          enabled: true,
+          content: state.selectionContext,
+          source: 'selection',
+          priority: 5,
+          tokenEstimate: Math.ceil(state.selectionContext.length / 4),
+        });
+      }
+
+      // Update state with assembled layers
+      update((s) => ({ ...s, contextLayers: layers }));
+
+      return layers.sort((a, b) => a.priority - b.priority);
+    },
+
+    /**
+     * Builds the context system message from assembled layers
+     */
+    buildContextSystemMessage(layers: ContextLayer[]): string {
+      if (layers.length === 0) return '';
+
+      let contextContent = '';
+
+      for (const layer of layers) {
+        if (!layer.enabled) continue;
+
+        switch (layer.type) {
+          case 'global':
+            contextContent += `## About the User (from me.midlight)\n${layer.content}\n\n`;
+            break;
+          case 'project':
+            contextContent += `## Project Context\n${layer.content}\n\n`;
+            break;
+          case 'document':
+            contextContent += `## Current Document\n${layer.content}\n\n`;
+            break;
+          case 'mentioned':
+            contextContent += `## Referenced: ${layer.source}\n${layer.content}\n\n`;
+            break;
+          case 'selection':
+            contextContent += `## Selected Text\n${layer.content}\n\n`;
+            break;
+        }
+      }
+
+      return contextContent.trim();
     },
 
     /**
@@ -353,6 +589,16 @@ function createAIStore() {
           isStreaming: false,
           currentStreamId: null,
         }));
+
+        // Trigger context update evaluation after successful response
+        if (contextUpdateHook && updatedState.currentProjectPath && accumulatedContent) {
+          // Fire and forget - don't block the UI
+          contextUpdateHook(
+            updatedState.currentProjectPath,
+            userContent,
+            accumulatedContent
+          ).catch((err) => console.warn('[AI] Context update hook failed:', err));
+        }
 
         return assistantMessageId;
       } catch (error) {
@@ -827,6 +1073,21 @@ IMPORTANT INSTRUCTIONS:
           currentStreamId: null,
         }));
 
+        // Get the final assistant message content for context update
+        const finalState = get({ subscribe });
+        const finalConversation = finalState.conversations.find((c) => c.id === conversationId);
+        const finalAssistantMessage = finalConversation?.messages.find((m) => m.id === assistantMessageId);
+
+        // Trigger context update evaluation after successful agent response
+        if (contextUpdateHook && state.currentProjectPath && finalAssistantMessage?.content) {
+          // Fire and forget - don't block the UI
+          contextUpdateHook(
+            state.currentProjectPath,
+            userContent,
+            finalAssistantMessage.content
+          ).catch((err) => console.warn('[AI] Context update hook failed:', err));
+        }
+
         return assistantMessageId;
       } catch (error) {
         // Mark any active steps as completed
@@ -1292,3 +1553,16 @@ export const activeConversation = derived(ai, ($ai) =>
 export const inlineEditState = derived(ai, ($ai) => $ai.inlineEdit);
 
 export const isInlineEditActive = derived(ai, ($ai) => $ai.inlineEdit.isActive);
+
+// Context hierarchy derived stores (Phase 2)
+export const freshStartMode = derived(ai, ($ai) => $ai.freshStartMode);
+
+export const contextLayers = derived(ai, ($ai) => $ai.contextLayers);
+
+export const currentProjectPath = derived(ai, ($ai) => $ai.currentProjectPath);
+
+export const includeGlobalContext = derived(ai, ($ai) => $ai.includeGlobalContext);
+
+export const totalContextTokens = derived(ai, ($ai) =>
+  $ai.contextLayers.reduce((sum, layer) => sum + (layer.tokenEstimate || 0), 0)
+);

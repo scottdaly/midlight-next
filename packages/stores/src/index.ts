@@ -26,8 +26,22 @@ export {
   activeConversation,
   inlineEditState,
   isInlineEditActive,
+  freshStartMode,
+  contextLayers,
+  currentProjectPath,
+  includeGlobalContext,
+  totalContextTokens,
 } from './ai.js';
-export type { ToolExecutor, ContextItem, InlineEditState } from './ai.js';
+export type {
+  ToolExecutor,
+  ContextItem,
+  InlineEditState,
+  ContextLayer,
+  ContextLayerType,
+  GlobalContextLoader,
+  ProjectContextLoader,
+  ContextUpdateHook,
+} from './ai.js';
 export { versions, selectedVersion } from './versions.js';
 export { auth, isAuthenticated, currentUser } from './auth.js';
 export type { User, Subscription, Quota, AuthState } from './auth.js';
@@ -181,3 +195,68 @@ export type {
   SyncState,
   SyncStatusType,
 } from './sync.js';
+export {
+  projectStore,
+  projects,
+  activeProjects,
+  pausedProjects,
+  archivedProjects,
+  projectCount,
+  isProjectScanning,
+  projectPaths,
+  projectError,
+} from './project.js';
+export type { ProjectInfo, ProjectState, ProjectScanner } from './project.js';
+export {
+  contextUpdateStore,
+  pendingContextUpdate,
+  showContextUpdateDialog,
+  isExtractingContextUpdates,
+  isApplyingContextUpdate,
+  contextUpdateError,
+  canUndoContextUpdate,
+  lastContextUpdateTime,
+} from './context.js';
+export type {
+  PendingContextUpdate,
+  ContextUpdateHistoryEntry,
+  ContextUpdateState,
+  ContextLoader,
+  ContextSaver,
+  ExtractionLLMCall,
+} from './context.js';
+export {
+  workflowStore,
+  workflowPhase,
+  activeWorkflow,
+  currentStep,
+  workflowAnswers,
+  validationErrors,
+  executionProgress,
+  executionResult,
+  workflowError,
+  isWorkflowActive,
+  availableWorkflows,
+  isFirstStep,
+  isLastStep,
+} from './workflow.js';
+export type { WorkflowPhase, WorkflowState } from './workflow.js';
+export {
+  rag,
+  isSearching,
+  searchResults,
+  searchQuery,
+  ragError,
+  indexedProjectCount,
+  isAnyProjectIndexing,
+} from './rag.js';
+export type {
+  RAGState,
+  RAGIndexer,
+  RAGSearcher,
+  RAGStatusGetter,
+  RAGIndexDeleter,
+} from './rag.js';
+
+// Performance utilities
+export { debounce, throttle, memoize, batchCalls } from './utils/performance.js';

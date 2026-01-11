@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { ai, activeConversation, fileSystem, auth, subscription, isQuotaExceeded, showQuotaWarning, isFreeTier } from '@midlight/stores';
+  import { ai, activeConversation, fileSystem, auth, subscription, isQuotaExceeded, showQuotaWarning, isFreeTier, freshStartMode } from '@midlight/stores';
   import type { LLMProvider } from '@midlight/core';
   import type { FileNode } from '@midlight/core/types';
   import { Markdown } from '@midlight/ui';
   import ConversationTabs from './Chat/ConversationTabs.svelte';
-  import ContextPicker from './Chat/ContextPicker.svelte';
+  import ContextPicker, { type SelectedFile } from './Chat/ContextPicker.svelte';
   import ContextPills from './Chat/ContextPills.svelte';
+  import ContextLayersPanel from './Chat/ContextLayersPanel.svelte';
   import ToolActionsGroup from './Chat/ToolActionsGroup.svelte';
   import ThinkingSteps from './Chat/ThinkingSteps.svelte';
   import QuotaBadge from './Chat/QuotaBadge.svelte';
@@ -187,8 +188,10 @@
   }
 
   // Handle file selection from context picker
-  async function handleFileSelect(file: FileNode) {
+  async function handleFileSelect(selection: SelectedFile) {
     showContextPicker = false;
+
+    const { file, projectPath, projectName } = selection;
 
     // Load file content
     try {
@@ -200,12 +203,19 @@
         displayName = displayName.slice(0, -9);
       }
 
+      // Add project prefix if from another project
+      if (projectName) {
+        displayName = `${projectName}/${displayName}`;
+      }
+
       // Add to context items
       ai.addContextItem({
         type: 'file',
         path: file.path,
         content,
         label: displayName,
+        projectPath,
+        projectName,
       });
 
       // Remove the @query from input
@@ -447,6 +457,9 @@
 
     <!-- Input Area -->
     <div class="flex-shrink-0">
+      <!-- Context Layers Panel -->
+      <ContextLayersPanel />
+
       <!-- Context Pills -->
       <div class="px-3 pt-2 pb-1">
         <ContextPills />
@@ -547,6 +560,25 @@
                   <path d="M4 12h4"/>
                 </svg>
                 <span>Agent</span>
+              </button>
+
+              <!-- Fresh Start Toggle -->
+              <button
+                type="button"
+                onclick={() => ai.toggleFreshStartMode()}
+                class="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors
+                  {$freshStartMode
+                    ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'}"
+                title={$freshStartMode ? 'Fresh Start mode: project context disabled' : 'Enable Fresh Start mode (ignore project context)'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                  <path d="M16 16h5v5"/>
+                </svg>
+                <span>Fresh</span>
               </button>
             </div>
 
