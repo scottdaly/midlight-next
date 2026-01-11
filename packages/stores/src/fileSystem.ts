@@ -103,6 +103,9 @@ function createFileSystemStore() {
   // Storage adapter will be set based on platform (Tauri or Web)
   let storageAdapter: StorageAdapter | null = null;
 
+  // Callback for when a file is saved (for incremental indexing)
+  let onSaveCallback: ((rootDir: string, filePath: string) => void) | null = null;
+
   return {
     subscribe,
 
@@ -111,6 +114,14 @@ function createFileSystemStore() {
      */
     setStorageAdapter(adapter: StorageAdapter) {
       storageAdapter = adapter;
+    },
+
+    /**
+     * Sets a callback to be called after a file is saved successfully
+     * Used for incremental RAG indexing
+     */
+    setOnSaveCallback(callback: (rootDir: string, filePath: string) => void) {
+      onSaveCallback = callback;
     },
 
     /**
@@ -304,6 +315,15 @@ function createFileSystemStore() {
         );
 
         update((s) => ({ ...s, isDirty: false, isSaving: false, lastSavedAt: new Date() }));
+
+        // Call onSave callback for incremental indexing (fire-and-forget)
+        if (onSaveCallback && state.rootDir && state.activeFilePath) {
+          try {
+            onSaveCallback(state.rootDir, state.activeFilePath);
+          } catch {
+            // Ignore errors in callback - incremental indexing is best-effort
+          }
+        }
       } catch (error) {
         update((s) => ({ ...s, isSaving: false }));
         throw error;

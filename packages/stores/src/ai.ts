@@ -32,7 +32,7 @@ export interface ContextItem {
 }
 
 // Context layer types for hierarchical context assembly
-export type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection';
+export type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection' | 'semantic';
 
 export interface ContextLayer {
   type: ContextLayerType;

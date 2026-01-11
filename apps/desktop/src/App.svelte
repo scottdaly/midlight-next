@@ -5,7 +5,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth, recoveryStore, clearAllWalWrites, toastStore, fileWatcherStore, shortcuts, contextUpdateStore, workflowStore, rag } from '@midlight/stores';
+  import { fileSystem, activeFile, settings, ui, isRightPanelOpen, ai, auth, recoveryStore, clearAllWalWrites, toastStore, fileWatcherStore, shortcuts, contextUpdateStore, workflowStore, rag, projectStore } from '@midlight/stores';
   import type { Shortcut } from '@midlight/stores';
   import { TauriStorageAdapter } from '$lib/tauri';
   import { createTauriLLMClient } from '$lib/llm';
@@ -159,8 +159,20 @@
         // Initialize workflow store with file system and LLM
         initializeWorkflowStore();
 
+        // Initialize project store with Tauri scanner
+        initializeProjectStore();
+
+        // Scan for projects in workspace
+        await projectStore.scanProjects(defaultWorkspace);
+
         // Initialize RAG store with Tauri implementations
         initializeRAGStore();
+
+        // Set up incremental indexing on file save
+        setupIncrementalIndexing(defaultWorkspace);
+
+        // Auto-index projects in background (don't block initialization)
+        autoIndexProjects(defaultWorkspace);
       } catch (error) {
         console.error('Failed to initialize:', error);
         // Report initialization error (if reporting is enabled)
@@ -446,6 +458,8 @@
       await checkForRecovery(selected);
       // Start file watcher for new workspace
       await startFileWatcher(selected);
+      // Auto-index projects in background
+      autoIndexProjects(selected);
     }
   }
 
@@ -545,6 +559,16 @@
     };
   }
 
+  // Initialize project store with Tauri scanner
+  function initializeProjectStore() {
+    projectStore.setProjectScanner(async (workspaceRoot: string) => {
+      const projects = await invoke<Array<{ path: string; config: any }>>('workspace_scan_projects', {
+        workspaceRoot,
+      });
+      return projects;
+    });
+  }
+
   // Initialize RAG store with Tauri implementations
   function initializeRAGStore() {
     rag.setImplementation({
@@ -557,6 +581,18 @@
           projectPath,
           authToken: accessToken,
           force: force ?? false,
+        });
+      },
+      fileIndexer: async (projectPath: string, filePath: string) => {
+        const accessToken = await authClient.getAccessToken();
+        if (!accessToken) {
+          // Silently skip if not authenticated
+          return;
+        }
+        return invoke('rag_index_file', {
+          projectPath,
+          filePath,
+          authToken: accessToken,
         });
       },
       searcher: async (query: string, options?: { topK?: number; minScore?: number; projectPaths?: string[] }) => {
@@ -579,6 +615,78 @@
         return invoke('rag_delete_index', { projectPath });
       },
     });
+  }
+
+  // Set up incremental indexing when files are saved
+  function setupIncrementalIndexing(workspaceRoot: string) {
+    fileSystem.setOnSaveCallback(async (rootDir: string, filePath: string) => {
+      // Only index .midlight files (markdown documents)
+      if (!filePath.endsWith('.midlight')) {
+        return;
+      }
+
+      // Find which project this file belongs to
+      const fullPath = `${rootDir}/${filePath}`;
+
+      // Get all projects and find the one that contains this file
+      try {
+        const projects = await invoke<Array<{ path: string; config: { name: string } }>>('workspace_scan_projects', {
+          workspaceRoot: rootDir,
+        });
+
+        for (const project of projects) {
+          const projectFullPath = project.path === '.' ? rootDir : `${rootDir}/${project.path}`;
+          if (fullPath.startsWith(projectFullPath + '/') || fullPath === projectFullPath) {
+            // Found the project - trigger incremental indexing
+            console.debug(`[RAG] Incremental index: ${filePath} in project ${project.path}`);
+            await rag.indexFile(projectFullPath, fullPath);
+            return;
+          }
+        }
+      } catch (error) {
+        // Silently fail - incremental indexing is best-effort
+        console.debug('[RAG] Incremental index failed:', error);
+      }
+    });
+  }
+
+  // Auto-index all projects in workspace (background, non-blocking)
+  async function autoIndexProjects(workspaceRoot: string) {
+    try {
+      // Check if user is authenticated (required for embedding API)
+      const accessToken = await authClient.getAccessToken();
+      if (!accessToken) {
+        console.debug('[RAG] Skipping auto-index: not authenticated');
+        return;
+      }
+
+      // Scan for projects in workspace
+      const projects = await invoke<Array<{ path: string; name: string }>>('workspace_scan_projects', {
+        workspaceRoot,
+      });
+
+      if (projects.length === 0) {
+        console.debug('[RAG] No projects found to index');
+        return;
+      }
+
+      console.log(`[RAG] Auto-indexing ${projects.length} projects in background`);
+
+      // Index projects sequentially in background (don't await all at once)
+      for (const project of projects) {
+        try {
+          // Non-force index - only indexes if not already indexed or files changed
+          await rag.indexProject(project.path, false);
+        } catch (error) {
+          console.warn(`[RAG] Failed to index project ${project.name}:`, error);
+          // Continue with other projects
+        }
+      }
+
+      console.log('[RAG] Background indexing complete');
+    } catch (error) {
+      console.error('[RAG] Auto-index failed:', error);
+    }
   }
 
   // Initialize workflow store with platform-specific implementations

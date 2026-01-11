@@ -1,13 +1,16 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { fileSystem, projects, activeProjects, pausedProjects } from '@midlight/stores';
+  import { fileSystem, projects, activeProjects, pausedProjects, rag, isSearching as ragIsSearching, searchResults as ragSearchResults } from '@midlight/stores';
   import type { FileNode } from '@midlight/core/types';
+  import type { SearchResult } from '@midlight/core';
   import type { ProjectInfo } from '@midlight/stores';
 
   export interface SelectedFile {
     file: FileNode;
     projectPath?: string;
     projectName?: string;
+    semanticContent?: string;
+    semanticScore?: number;
   }
 
   interface Props {
@@ -24,6 +27,10 @@
   let browsingProject = $state<ProjectInfo | null>(null);
   let projectFiles = $state<FileNode[]>([]);
   let isLoadingProjectFiles = $state(false);
+
+  // Debounced semantic search
+  let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastSemanticQuery = $state('');
 
   // Flatten file tree for searching
   function flattenFiles(files: FileNode[], result: FileNode[] = []): FileNode[] {
@@ -70,17 +77,52 @@
       .slice(0, 10);
   });
 
+  // Trigger semantic search when query is long enough
+  $effect(() => {
+    if (query.length >= 3 && query !== lastSemanticQuery && !browsingProject) {
+      // Clear previous timeout
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+      // Debounce: wait 300ms before searching
+      searchTimeout = setTimeout(async () => {
+        lastSemanticQuery = query;
+        await rag.search(query, { topK: 5, minScore: 0.5 });
+      }, 300);
+    }
+    return () => {
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+    };
+  });
+
+  // Transform semantic results for display
+  const semanticResults = $derived(() => {
+    if (!$ragSearchResults || $ragSearchResults.length === 0) return [];
+    return $ragSearchResults.slice(0, 5);
+  });
+
   // Combined items for keyboard navigation
   const allItems = $derived(() => {
     if (browsingProject) {
       return filteredProjectFiles();
     }
 
-    const items: (FileNode | ProjectInfo)[] = [];
+    const items: (FileNode | ProjectInfo | SearchResult)[] = [];
     items.push(...currentWorkspaceFiles());
+    // Add semantic results if we have a query
+    if (query.length >= 3) {
+      items.push(...semanticResults());
+    }
     items.push(...otherProjects());
     return items;
   });
+
+  // Check if item is a semantic result
+  function isSemanticResult(item: FileNode | ProjectInfo | SearchResult): item is SearchResult {
+    return 'score' in item && 'content' in item;
+  }
 
   // Reset selected index when items change
   $effect(() => {
@@ -134,9 +176,25 @@
   }
 
   // Handle item selection
-  function handleItemClick(item: FileNode | ProjectInfo) {
+  function handleItemClick(item: FileNode | ProjectInfo | SearchResult) {
     if (isProject(item)) {
       loadProjectFiles(item);
+    } else if (isSemanticResult(item)) {
+      // Create a synthetic file node from semantic result
+      const filePath = item.filePath;
+      const fileName = filePath.split('/').pop() || filePath;
+      onSelect({
+        file: {
+          name: fileName,
+          path: filePath,
+          type: 'file',
+          category: 'midlight',
+        } as FileNode,
+        projectPath: item.projectPath,
+        projectName: item.projectName,
+        semanticContent: item.content,
+        semanticScore: item.score,
+      });
     } else {
       onSelect({
         file: item,
@@ -264,6 +322,59 @@
           {/each}
         {/if}
 
+        <!-- Semantic search results -->
+        {#if query.length >= 3}
+          <div class="h-px bg-border my-1"></div>
+          <div class="px-3 py-1.5 text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
+            Semantic Search
+            {#if $ragIsSearching}
+              <svg class="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+            {/if}
+          </div>
+          {#if semanticResults().length === 0 && !$ragIsSearching}
+            <div class="px-3 py-2 text-sm text-muted-foreground">
+              No semantic matches found
+            </div>
+          {:else}
+            {#each semanticResults() as result, i}
+              {@const globalIndex = currentWorkspaceFiles().length + i}
+              {@const fileName = result.filePath.split('/').pop() || result.filePath}
+              {@const displayName = fileName.endsWith('.midlight') ? fileName.slice(0, -9) : fileName}
+              <button
+                onclick={() => handleItemClick(result)}
+                class="w-full text-left px-3 py-2 flex items-start gap-2 hover:bg-accent {globalIndex === selectedIndex ? 'bg-accent' : ''}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-500 flex-shrink-0 mt-0.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <path d="M14 2v6h6"/>
+                </svg>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium truncate">{displayName}</span>
+                    {#if result.projectName}
+                      <span class="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary truncate max-w-24">
+                        {result.projectName}
+                      </span>
+                    {/if}
+                    <span class="text-xs text-muted-foreground ml-auto flex-shrink-0">
+                      {Math.round(result.score * 100)}%
+                    </span>
+                  </div>
+                  <div class="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                    {result.content.slice(0, 150)}{result.content.length > 150 ? '...' : ''}
+                  </div>
+                </div>
+              </button>
+            {/each}
+          {/if}
+        {/if}
+
         <!-- Other projects -->
         {#if otherProjects().length > 0}
           <div class="h-px bg-border my-1"></div>
@@ -271,7 +382,7 @@
             Other Projects
           </div>
           {#each otherProjects() as project, i}
-            {@const globalIndex = currentWorkspaceFiles().length + i}
+            {@const globalIndex = currentWorkspaceFiles().length + semanticResults().length + i}
             <button
               onclick={() => handleItemClick(project)}
               class="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent {globalIndex === selectedIndex ? 'bg-accent' : ''}"

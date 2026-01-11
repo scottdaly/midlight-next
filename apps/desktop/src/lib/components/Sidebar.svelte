@@ -6,6 +6,8 @@
   import type { FileNode, ProjectStatus } from '@midlight/core/types';
   import FileContextMenu from './FileContextMenu.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import IndexStatusBadge from './IndexStatusBadge.svelte';
+  import ArchivedProjectsSection from './ArchivedProjectsSection.svelte';
 
   // Local tree state with expansion tracking
   interface TreeNode extends FileNode {
@@ -807,6 +809,9 @@
     {/if}
   </div>
 
+  <!-- Archived Projects Section -->
+  <ArchivedProjectsSection />
+
   <!-- Footer with Settings -->
   <div class="border-t border-border p-2">
     <button
@@ -931,6 +936,8 @@
               <rect width="20" height="14" x="2" y="7" rx="2" ry="2"/>
               <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
             </svg>
+            <!-- Index status badge -->
+            <IndexStatusBadge projectPath={node.path} />
           {:else}
             <!-- Regular folder icon -->
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0 text-amber-500">

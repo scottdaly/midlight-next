@@ -11,8 +11,10 @@ use crate::services::embedding_service::EmbeddingService;
 use crate::services::vector_store::{IndexStatus, SearchResult, StoredChunk, VectorStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
@@ -105,20 +107,15 @@ impl RAGService {
         auth_token: &str,
         force: bool,
     ) -> Result<IndexStatus, RAGError> {
-        // Check if already indexing
+        // Atomic check-and-insert to prevent race condition (TOCTOU)
         {
-            let indexing = self.indexing_projects.read().await;
+            let mut indexing = self.indexing_projects.write().await;
             if indexing.contains(project_path) {
                 return Err(RAGError {
                     code: "ALREADY_INDEXING".to_string(),
                     message: format!("Project {} is already being indexed", project_path),
                 });
             }
-        }
-
-        // Mark as indexing
-        {
-            let mut indexing = self.indexing_projects.write().await;
             indexing.insert(project_path.to_string());
         }
 
@@ -135,19 +132,22 @@ impl RAGService {
         result
     }
 
-    /// Internal implementation of index_project
+    /// Internal implementation of index_project with incremental support
     async fn do_index_project(
         &self,
         project_path: &str,
         auth_token: &str,
         force: bool,
     ) -> Result<IndexStatus, RAGError> {
-        info!("Indexing project: {}", project_path);
+        info!(
+            "Indexing project: {} (force: {})",
+            project_path, force
+        );
 
-        // Delete existing chunks if force re-index
+        // Delete existing chunks and tracking atomically if force re-index
         if force {
             self.vector_store
-                .delete_project(project_path)
+                .delete_project_complete(project_path)
                 .await
                 .map_err(|e| RAGError {
                     code: "DELETE_ERROR".to_string(),
@@ -155,11 +155,11 @@ impl RAGService {
                 })?;
         }
 
-        // Scan for files to index
-        let files = self.scan_project_files(project_path)?;
-        info!("Found {} files to index", files.len());
+        // Scan for current files
+        let current_files = self.scan_project_files(project_path)?;
+        info!("Found {} files in project", current_files.len());
 
-        if files.is_empty() {
+        if current_files.is_empty() {
             return Ok(IndexStatus {
                 project_path: project_path.to_string(),
                 project_name: Path::new(project_path)
@@ -175,15 +175,110 @@ impl RAGService {
             });
         }
 
-        // Process each file
-        let mut all_chunks: Vec<(String, String, String)> = Vec::new(); // (id, content, file_path)
-        let mut indexed_files = 0;
+        // Get previously indexed files (empty if force)
+        let indexed_files = if force {
+            std::collections::HashMap::new()
+        } else {
+            self.vector_store
+                .get_indexed_files(project_path)
+                .await
+                .unwrap_or_default()
+        };
 
-        for file_path in &files {
+        // Determine which files need indexing
+        let mut files_to_index: Vec<(String, i64)> = Vec::new(); // (path, mtime)
+        let current_files_set: HashSet<String> = current_files.iter().cloned().collect();
+
+        for file_path in &current_files {
+            let mtime = self.get_file_mtime(file_path).unwrap_or(0);
+
+            if let Some(&indexed_mtime) = indexed_files.get(file_path) {
+                // File exists in index - check if modified
+                if mtime > indexed_mtime {
+                    debug!("File modified, will re-index: {}", file_path);
+                    files_to_index.push((file_path.clone(), mtime));
+                } else {
+                    debug!("File unchanged, skipping: {}", file_path);
+                }
+            } else {
+                // New file
+                debug!("New file, will index: {}", file_path);
+                files_to_index.push((file_path.clone(), mtime));
+            }
+        }
+
+        // Find deleted files (were indexed but no longer exist)
+        let mut deleted_count = 0;
+        for indexed_path in indexed_files.keys() {
+            if !current_files_set.contains(indexed_path) {
+                debug!("File deleted, removing from index: {}", indexed_path);
+                if let Err(e) = self
+                    .vector_store
+                    .delete_file_complete(project_path, indexed_path)
+                    .await
+                {
+                    warn!("Failed to delete removed file {}: {}", indexed_path, e);
+                } else {
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        if deleted_count > 0 {
+            info!("Removed {} deleted files from index", deleted_count);
+        }
+
+        if files_to_index.is_empty() {
+            info!("No files need indexing - index is up to date");
+            // Return current status
+            return self.get_status(Some(project_path)).await.map(|statuses| {
+                statuses.into_iter().next().unwrap_or(IndexStatus {
+                    project_path: project_path.to_string(),
+                    project_name: Path::new(project_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(String::from),
+                    total_documents: current_files.len() as u32,
+                    indexed_documents: current_files.len() as u32,
+                    total_chunks: 0,
+                    last_indexed: Some(chrono::Utc::now().to_rfc3339()),
+                    is_indexing: false,
+                    error: None,
+                })
+            });
+        }
+
+        info!("{} files need indexing", files_to_index.len());
+
+        // Process files that need indexing
+        let mut all_chunks: Vec<(String, String, String, i64)> = Vec::new(); // (id, content, file_path, mtime)
+        let mut files_processed = 0;
+
+        for (file_path, mtime) in &files_to_index {
+            // Delete old chunks for this file first (for re-indexing modified files)
+            if indexed_files.contains_key(file_path) {
+                self.vector_store
+                    .delete_file_complete(project_path, file_path)
+                    .await
+                    .ok();
+            }
+
             match self.process_file(project_path, file_path) {
                 Ok(chunks) => {
-                    all_chunks.extend(chunks);
-                    indexed_files += 1;
+                    let chunk_count = chunks.len();
+                    for (id, content, fp) in chunks {
+                        all_chunks.push((id, content, fp, *mtime));
+                    }
+                    files_processed += 1;
+
+                    // Track this file
+                    if let Err(e) = self
+                        .vector_store
+                        .track_indexed_file(project_path, file_path, *mtime, chunk_count as i32)
+                        .await
+                    {
+                        warn!("Failed to track file {}: {}", file_path, e);
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to process file {}: {}", file_path, e);
@@ -198,7 +293,7 @@ impl RAGService {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .map(String::from),
-                total_documents: files.len() as u32,
+                total_documents: current_files.len() as u32,
                 indexed_documents: 0,
                 total_chunks: 0,
                 last_indexed: Some(chrono::Utc::now().to_rfc3339()),
@@ -208,7 +303,7 @@ impl RAGService {
         }
 
         // Generate embeddings in batches
-        let texts: Vec<String> = all_chunks.iter().map(|(_, c, _)| c.clone()).collect();
+        let texts: Vec<String> = all_chunks.iter().map(|(_, c, _, _)| c.clone()).collect();
         let embeddings = self
             .embedding_service
             .embed_texts(texts, auth_token)
@@ -224,13 +319,13 @@ impl RAGService {
             .into_iter()
             .zip(embeddings)
             .enumerate()
-            .map(|(i, ((id, content, file_path), embedding))| StoredChunk {
+            .map(|(i, ((id, content, file_path, _), embedding))| StoredChunk {
                 id,
                 project_path: project_path.to_string(),
                 file_path,
                 chunk_index: i as i32,
                 content,
-                heading: None, // TODO: Extract headings
+                heading: None,
                 embedding,
                 created_at: timestamp.clone(),
             })
@@ -248,23 +343,46 @@ impl RAGService {
             })?;
 
         info!(
-            "Indexed {} files with {} chunks for project {}",
-            indexed_files, chunk_count, project_path
+            "Indexed {} files with {} chunks for project {} (incremental)",
+            files_processed, chunk_count, project_path
         );
 
-        Ok(IndexStatus {
-            project_path: project_path.to_string(),
-            project_name: Path::new(project_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(String::from),
-            total_documents: files.len() as u32,
-            indexed_documents: indexed_files,
-            total_chunks: chunk_count as u32,
-            last_indexed: Some(timestamp),
-            is_indexing: false,
-            error: None,
+        // Get updated status
+        self.get_status(Some(project_path)).await.map(|statuses| {
+            statuses.into_iter().next().unwrap_or(IndexStatus {
+                project_path: project_path.to_string(),
+                project_name: Path::new(project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(String::from),
+                total_documents: current_files.len() as u32,
+                indexed_documents: files_processed,
+                total_chunks: chunk_count as u32,
+                last_indexed: Some(timestamp),
+                is_indexing: false,
+                error: None,
+            })
         })
+    }
+
+    /// Get file modification time as Unix timestamp (seconds)
+    fn get_file_mtime(&self, file_path: &str) -> Result<i64, RAGError> {
+        let metadata = fs::metadata(file_path).map_err(|e| RAGError {
+            code: "METADATA_ERROR".to_string(),
+            message: format!("Failed to get metadata for {}: {}", file_path, e),
+        })?;
+
+        let mtime = metadata.modified().map_err(|e| RAGError {
+            code: "MTIME_ERROR".to_string(),
+            message: format!("Failed to get mtime for {}: {}", file_path, e),
+        })?;
+
+        let duration = mtime.duration_since(UNIX_EPOCH).map_err(|e| RAGError {
+            code: "TIME_ERROR".to_string(),
+            message: format!("Time error for {}: {}", file_path, e),
+        })?;
+
+        Ok(duration.as_secs() as i64)
     }
 
     /// Search for relevant chunks
@@ -330,10 +448,10 @@ impl RAGService {
         Ok(statuses)
     }
 
-    /// Delete index for a project
+    /// Delete index for a project (atomic - chunks + tracking in single transaction)
     pub async fn delete_index(&self, project_path: &str) -> Result<(), RAGError> {
         self.vector_store
-            .delete_project(project_path)
+            .delete_project_complete(project_path)
             .await
             .map_err(|e| RAGError {
                 code: "DELETE_ERROR".to_string(),
@@ -341,6 +459,87 @@ impl RAGService {
             })?;
 
         info!("Deleted index for project: {}", project_path);
+        Ok(())
+    }
+
+    /// Index a single file (for real-time updates during editing)
+    pub async fn index_file(
+        &self,
+        project_path: &str,
+        file_path: &str,
+        auth_token: &str,
+    ) -> Result<(), RAGError> {
+        info!("Indexing single file: {}", file_path);
+
+        // Get file mtime
+        let mtime = self.get_file_mtime(file_path)?;
+
+        // Delete old chunks for this file (atomic)
+        self.vector_store
+            .delete_file_complete(project_path, file_path)
+            .await
+            .ok();
+
+        // Process the file
+        let chunks = self.process_file(project_path, file_path).map_err(|e| RAGError {
+            code: "PROCESS_ERROR".to_string(),
+            message: e,
+        })?;
+        if chunks.is_empty() {
+            debug!("No content in file: {}", file_path);
+            return Ok(());
+        }
+
+        // Generate embeddings
+        let texts: Vec<String> = chunks.iter().map(|(_, c, _)| c.clone()).collect();
+        let embeddings = self
+            .embedding_service
+            .embed_texts(texts, auth_token)
+            .await
+            .map_err(|e| RAGError {
+                code: e.code,
+                message: e.message,
+            })?;
+
+        // Create stored chunks
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let stored_chunks: Vec<StoredChunk> = chunks
+            .into_iter()
+            .zip(embeddings)
+            .enumerate()
+            .map(|(i, ((id, content, fp), embedding))| StoredChunk {
+                id,
+                project_path: project_path.to_string(),
+                file_path: fp,
+                chunk_index: i as i32,
+                content,
+                heading: None,
+                embedding,
+                created_at: timestamp.clone(),
+            })
+            .collect();
+
+        let chunk_count = stored_chunks.len();
+
+        // Store in vector database
+        self.vector_store
+            .upsert_chunks(stored_chunks)
+            .await
+            .map_err(|e| RAGError {
+                code: "STORE_ERROR".to_string(),
+                message: e,
+            })?;
+
+        // Track indexed file
+        self.vector_store
+            .track_indexed_file(project_path, file_path, mtime, chunk_count as i32)
+            .await
+            .map_err(|e| RAGError {
+                code: "TRACK_ERROR".to_string(),
+                message: e,
+            })?;
+
+        info!("Indexed file {} with {} chunks", file_path, chunk_count);
         Ok(())
     }
 

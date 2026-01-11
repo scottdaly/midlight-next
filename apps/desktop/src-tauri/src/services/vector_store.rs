@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Types
@@ -58,7 +58,7 @@ impl Default for IndexStatus {
 }
 
 /// Search result with score
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub chunk: DocumentChunk,
@@ -66,7 +66,7 @@ pub struct SearchResult {
 }
 
 /// Document chunk metadata for search results (without embedding)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentChunk {
     pub id: String,
@@ -77,7 +77,7 @@ pub struct DocumentChunk {
     pub metadata: ChunkMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunkMetadata {
     pub heading: Option<String>,
@@ -139,6 +139,20 @@ impl VectorStore {
         )
         .ok();
 
+        // Create indexed_files table for tracking file modification times (incremental indexing)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS indexed_files (
+                project_path TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                mtime INTEGER NOT NULL,
+                indexed_at TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                PRIMARY KEY (project_path, file_path)
+            )",
+            [],
+        )
+        .map_err(|e| format!("Failed to create indexed_files table: {}", e))?;
+
         info!("Vector store initialized at {:?}", db_path);
 
         Ok(Self {
@@ -190,6 +204,10 @@ impl VectorStore {
     }
 
     /// Search for chunks similar to the query embedding
+    ///
+    /// Uses a bounded min-heap to efficiently track top-k results without
+    /// storing all chunks in memory. Also enforces a max scan limit to
+    /// prevent performance issues with very large datasets.
     pub async fn search(
         &self,
         query_embedding: &[f32],
@@ -197,6 +215,12 @@ impl VectorStore {
         project_filter: Option<&[String]>,
         min_score: Option<f32>,
     ) -> Result<Vec<SearchResult>, String> {
+        use std::cmp::Ordering;
+        use std::collections::BinaryHeap;
+
+        // Maximum chunks to scan (prevents runaway queries on large datasets)
+        const MAX_SCAN_LIMIT: usize = 10000;
+
         let conn = self.conn.lock().await;
 
         // Build query with optional project filter
@@ -233,11 +257,45 @@ impl VectorStore {
 
         let mut rows = rows.map_err(|e| format!("Query failed: {}", e))?;
 
-        // Collect all chunks and compute similarity
-        let mut results: Vec<(SearchResult, f32)> = Vec::new();
+        // Use a min-heap to efficiently track top-k results
+        // We wrap in Reverse to make it a min-heap (lowest score at top)
+        #[derive(PartialEq)]
+        struct ScoredResult {
+            score: f32,
+            result: SearchResult,
+        }
+
+        impl Eq for ScoredResult {}
+
+        impl PartialOrd for ScoredResult {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                // Reverse ordering for min-heap behavior
+                other.score.partial_cmp(&self.score)
+            }
+        }
+
+        impl Ord for ScoredResult {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            }
+        }
+
+        let mut heap: BinaryHeap<ScoredResult> = BinaryHeap::with_capacity(top_k + 1);
         let threshold = min_score.unwrap_or(0.0);
+        let mut scanned = 0;
 
         while let Some(row) = rows.next().map_err(|e| format!("Row error: {}", e))? {
+            scanned += 1;
+
+            // Enforce scan limit
+            if scanned > MAX_SCAN_LIMIT {
+                warn!(
+                    "Vector search hit scan limit ({}) - results may be incomplete. Consider filtering by project.",
+                    MAX_SCAN_LIMIT
+                );
+                break;
+            }
+
             let embedding_blob: Vec<u8> = row.get(6).map_err(|e| format!("Get embedding: {}", e))?;
 
             // Convert bytes back to f32 vec
@@ -248,64 +306,54 @@ impl VectorStore {
 
             let score = cosine_similarity(query_embedding, &embedding);
 
-            if score >= threshold {
-                let heading: Option<String> = row.get(5).ok();
-                let content: String = row.get(4).map_err(|e| format!("Get content: {}", e))?;
+            // Skip if below threshold
+            if score < threshold {
+                continue;
+            }
 
-                let result = SearchResult {
-                    chunk: DocumentChunk {
-                        id: row.get(0).map_err(|e| format!("Get id: {}", e))?,
-                        project_path: row.get(1).map_err(|e| format!("Get project_path: {}", e))?,
-                        file_path: row.get(2).map_err(|e| format!("Get file_path: {}", e))?,
-                        chunk_index: row.get(3).map_err(|e| format!("Get chunk_index: {}", e))?,
-                        content: content.clone(),
-                        metadata: ChunkMetadata {
-                            heading,
-                            section: None,
-                            token_estimate: (content.len() / 4) as u32,
-                        },
+            // Skip if heap is full and this score is worse than the minimum in heap
+            if heap.len() >= top_k {
+                if let Some(min) = heap.peek() {
+                    if score <= min.score {
+                        continue;
+                    }
+                }
+            }
+
+            let heading: Option<String> = row.get(5).ok();
+            let content: String = row.get(4).map_err(|e| format!("Get content: {}", e))?;
+
+            let result = SearchResult {
+                chunk: DocumentChunk {
+                    id: row.get(0).map_err(|e| format!("Get id: {}", e))?,
+                    project_path: row.get(1).map_err(|e| format!("Get project_path: {}", e))?,
+                    file_path: row.get(2).map_err(|e| format!("Get file_path: {}", e))?,
+                    chunk_index: row.get(3).map_err(|e| format!("Get chunk_index: {}", e))?,
+                    content: content.clone(),
+                    metadata: ChunkMetadata {
+                        heading,
+                        section: None,
+                        token_estimate: (content.len() / 4) as u32,
                     },
-                    score,
-                };
-                results.push((result, score));
+                },
+                score,
+            };
+
+            heap.push(ScoredResult { score, result });
+
+            // If we have more than top_k, remove the lowest
+            if heap.len() > top_k {
+                heap.pop();
             }
         }
 
-        // Sort by score descending and take top_k
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(top_k);
+        debug!("Vector search scanned {} chunks, found {} results", scanned, heap.len());
 
-        Ok(results.into_iter().map(|(r, _)| r).collect())
-    }
+        // Extract results and sort by score descending
+        let mut results: Vec<SearchResult> = heap.into_iter().map(|sr| sr.result).collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 
-    /// Delete all chunks for a project
-    pub async fn delete_project(&self, project_path: &str) -> Result<usize, String> {
-        let conn = self.conn.lock().await;
-
-        let deleted = conn
-            .execute(
-                "DELETE FROM document_chunks WHERE project_path = ?1",
-                params![project_path],
-            )
-            .map_err(|e| format!("Delete failed: {}", e))?;
-
-        info!("Deleted {} chunks for project {}", deleted, project_path);
-        Ok(deleted)
-    }
-
-    /// Delete chunks for a specific file
-    pub async fn delete_file(&self, project_path: &str, file_path: &str) -> Result<usize, String> {
-        let conn = self.conn.lock().await;
-
-        let deleted = conn
-            .execute(
-                "DELETE FROM document_chunks WHERE project_path = ?1 AND file_path = ?2",
-                params![project_path, file_path],
-            )
-            .map_err(|e| format!("Delete failed: {}", e))?;
-
-        debug!("Deleted {} chunks for file {}", deleted, file_path);
-        Ok(deleted)
+        Ok(results)
     }
 
     /// Get index status for projects
@@ -372,30 +420,153 @@ impl VectorStore {
         Ok(statuses)
     }
 
-    /// Get total chunk count
-    pub async fn get_chunk_count(&self) -> Result<u32, String> {
+    // ========================================================================
+    // Incremental Indexing Support
+    // ========================================================================
+
+    /// Get all indexed files for a project with their modification times
+    /// Returns HashMap<file_path, mtime>
+    pub async fn get_indexed_files(
+        &self,
+        project_path: &str,
+    ) -> Result<std::collections::HashMap<String, i64>, String> {
         let conn = self.conn.lock().await;
 
-        let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM document_chunks", [], |row| row.get(0))
-            .map_err(|e| format!("Count failed: {}", e))?;
+        let mut stmt = conn
+            .prepare("SELECT file_path, mtime FROM indexed_files WHERE project_path = ?1")
+            .map_err(|e| format!("Prepare failed: {}", e))?;
 
-        Ok(count)
-    }
-
-    /// Check if a file has been indexed
-    pub async fn is_file_indexed(&self, project_path: &str, file_path: &str) -> Result<bool, String> {
-        let conn = self.conn.lock().await;
-
-        let count: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM document_chunks WHERE project_path = ?1 AND file_path = ?2",
-                params![project_path, file_path],
-                |row| row.get(0),
-            )
+        let rows = stmt
+            .query_map(params![project_path], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
             .map_err(|e| format!("Query failed: {}", e))?;
 
-        Ok(count > 0)
+        let mut files = std::collections::HashMap::new();
+        for row in rows {
+            let (path, mtime) = row.map_err(|e| format!("Row error: {}", e))?;
+            files.insert(path, mtime);
+        }
+
+        debug!(
+            "Retrieved {} indexed files for project {}",
+            files.len(),
+            project_path
+        );
+        Ok(files)
+    }
+
+    /// Track an indexed file with its modification time
+    pub async fn track_indexed_file(
+        &self,
+        project_path: &str,
+        file_path: &str,
+        mtime: i64,
+        chunk_count: i32,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO indexed_files (project_path, file_path, mtime, indexed_at, chunk_count)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                project_path,
+                file_path,
+                mtime,
+                chrono::Utc::now().to_rfc3339(),
+                chunk_count
+            ],
+        )
+        .map_err(|e| format!("Track file failed: {}", e))?;
+
+        debug!("Tracked indexed file: {} (mtime: {})", file_path, mtime);
+        Ok(())
+    }
+
+    /// Delete all data for a project atomically (chunks + tracking in single transaction)
+    pub async fn delete_project_complete(&self, project_path: &str) -> Result<usize, String> {
+        let conn = self.conn.lock().await;
+
+        conn.execute("BEGIN TRANSACTION", [])
+            .map_err(|e| format!("Begin transaction failed: {}", e))?;
+
+        let result = (|| {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM document_chunks WHERE project_path = ?1",
+                    params![project_path],
+                )
+                .map_err(|e| format!("Delete chunks failed: {}", e))?;
+
+            conn.execute(
+                "DELETE FROM indexed_files WHERE project_path = ?1",
+                params![project_path],
+            )
+            .map_err(|e| format!("Delete tracking failed: {}", e))?;
+
+            Ok::<usize, String>(deleted)
+        })();
+
+        match result {
+            Ok(deleted) => {
+                conn.execute("COMMIT", [])
+                    .map_err(|e| format!("Commit failed: {}", e))?;
+                info!(
+                    "Deleted {} chunks and all tracking for project {} (atomic)",
+                    deleted, project_path
+                );
+                Ok(deleted)
+            }
+            Err(e) => {
+                conn.execute("ROLLBACK", []).ok();
+                Err(e)
+            }
+        }
+    }
+
+    /// Delete file data atomically (chunks + tracking in single transaction)
+    pub async fn delete_file_complete(
+        &self,
+        project_path: &str,
+        file_path: &str,
+    ) -> Result<usize, String> {
+        let conn = self.conn.lock().await;
+
+        conn.execute("BEGIN TRANSACTION", [])
+            .map_err(|e| format!("Begin transaction failed: {}", e))?;
+
+        let result = (|| {
+            let deleted = conn
+                .execute(
+                    "DELETE FROM document_chunks WHERE project_path = ?1 AND file_path = ?2",
+                    params![project_path, file_path],
+                )
+                .map_err(|e| format!("Delete chunks failed: {}", e))?;
+
+            conn.execute(
+                "DELETE FROM indexed_files WHERE project_path = ?1 AND file_path = ?2",
+                params![project_path, file_path],
+            )
+            .map_err(|e| format!("Delete tracking failed: {}", e))?;
+
+            Ok::<usize, String>(deleted)
+        })();
+
+        match result {
+            Ok(deleted) => {
+                conn.execute("COMMIT", [])
+                    .map_err(|e| format!("Commit failed: {}", e))?;
+                debug!(
+                    "Deleted {} chunks and tracking for file {} (atomic)",
+                    deleted, file_path
+                );
+                Ok(deleted)
+            }
+            Err(e) => {
+                conn.execute("ROLLBACK", []).ok();
+                Err(e)
+            }
+        }
     }
 }
 
@@ -430,11 +601,13 @@ mod tests {
     use tempfile::tempdir;
 
     fn create_test_chunk(id: &str, content: &str, embedding: Vec<f32>) -> StoredChunk {
+        // Use id as chunk_index to ensure uniqueness (UNIQUE constraint on project_path, file_path, chunk_index)
+        let chunk_index: i32 = id.parse().unwrap_or(0);
         StoredChunk {
             id: id.to_string(),
             project_path: "/test/project".to_string(),
             file_path: "test.md".to_string(),
-            chunk_index: 0,
+            chunk_index,
             content: content.to_string(),
             heading: Some("Test Heading".to_string()),
             embedding,
@@ -482,7 +655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_project() {
+    async fn test_delete_project_complete() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = VectorStore::new(db_path).unwrap();
@@ -490,13 +663,14 @@ mod tests {
         let chunk = create_test_chunk("1", "Test content", vec![1.0, 0.0, 0.0]);
         store.upsert_chunks(vec![chunk]).await.unwrap();
 
-        let count = store.get_chunk_count().await.unwrap();
-        assert_eq!(count, 1);
+        let statuses = store.get_status(None).await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].total_chunks, 1);
 
-        store.delete_project("/test/project").await.unwrap();
+        store.delete_project_complete("/test/project").await.unwrap();
 
-        let count = store.get_chunk_count().await.unwrap();
-        assert_eq!(count, 0);
+        let statuses = store.get_status(None).await.unwrap();
+        assert_eq!(statuses.len(), 0);
     }
 
     #[tokio::test]

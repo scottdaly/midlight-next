@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-  import { fileSystem, selectedPaths, projectStore } from '@midlight/stores';
+  import { fileSystem, selectedPaths, projectStore, rag } from '@midlight/stores';
   import type { FileNode, ProjectStatus } from '@midlight/core/types';
   import ConfirmDialog from './ConfirmDialog.svelte';
 
@@ -44,6 +44,23 @@
   const hasClipboard = $derived(clipboard.paths.length > 0);
   const isProject = $derived(isFolder && projectStore.isProject(targetPath));
   const projectStatus = $derived(isProject ? projectStore.getProjectStatus(targetPath) : null);
+
+  // RAG indexing state
+  let isIndexing = $state(false);
+
+  async function handleIndexProject(force = false) {
+    if (!isProject) return;
+
+    isIndexing = true;
+    try {
+      await rag.indexProject(targetPath, force);
+    } catch (e) {
+      console.error('Failed to index project:', e);
+    } finally {
+      isIndexing = false;
+    }
+    onClose();
+  }
 
   // Get all selected paths (or just the target if not in selection)
   function getTargetPaths(): string[] {
@@ -322,6 +339,36 @@
         >
           <span class="w-3.5"></span>
           Archive
+        </button>
+        <div class="h-px bg-border my-1"></div>
+        <!-- Index for Search option -->
+        <button
+          class="w-full px-3 py-1.5 text-sm text-left text-popover-foreground hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+          onclick={() => handleIndexProject(false)}
+          disabled={isIndexing}
+          role="menuitem"
+        >
+          {#if isIndexing}
+            <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            </svg>
+            Indexing...
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
+            Index for Search
+          {/if}
+        </button>
+        <button
+          class="w-full px-3 py-1.5 text-sm text-left text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+          onclick={() => handleIndexProject(true)}
+          disabled={isIndexing}
+          role="menuitem"
+        >
+          <span class="w-3.5"></span>
+          Re-index (force)
         </button>
         <div class="h-px bg-border my-1"></div>
       {/if}

@@ -28,7 +28,11 @@ This document outlines a comprehensive implementation plan to align the midlight
 | Context parsing | ✅ Implemented | Phase 3 - Structured section parsing |
 | Automatic context updates | ✅ Implemented | Phase 3 - Silent AI context maintenance |
 | Workflows | ✅ Implemented | Phase 4 - Interview-based scaffolding |
-| Cross-project RAG | 🔲 Pending | Phase 5 - Embedding-based retrieval |
+| RAG Integration | ✅ Implemented | Phase 5 - Embedding-based semantic search |
+| Project Status UI | ✅ Implemented | Phase 5 - Status management in sidebar |
+| Project Archiving | ✅ Implemented | Phase 5 - Archive section with restore |
+| Context Panel | ✅ Implemented | Phase 5 - Token budget, layer controls |
+| Unified Search | ✅ Implemented | Phase 5 - Semantic + file search |
 
 ---
 
@@ -230,19 +234,65 @@ This document outlines a comprehensive implementation plan to align the midlight
 
 ---
 
-### 🔲 Phase 5: Polish and Cross-Project Features (PENDING)
+### ✅ Phase 5: Polish and Cross-Project Features (COMPLETED)
 
-**Planned Features:**
+**Implemented Features:**
 
-| Task | Effort | Dependencies |
-|------|--------|--------------|
-| Add project status management (active/paused/archived) | 4h | Phase 1 |
-| Add project archiving UI | 4h | Status |
-| Context drawer showing included context | 8h | Phase 2 |
-| Performance optimization for large workspaces | 8h | All |
-| Cross-project @-mention support | 8h | Phase 2 |
-| Cross-project RAG with embeddings | 16h | Phase 2 |
-| Documentation and user guide | 8h | All |
+1. **RAG Integration** (Task 1)
+   - Auto-indexing on workspace load via `autoIndexProjects()` in App.svelte
+   - "Index for Search" and "Re-index (force)" options in FileContextMenu
+   - IndexStatusBadge component showing indexing status on project folders
+   - States: not-indexed, indexing (spinner), indexed (checkmark), error
+
+2. **Unified Search with Semantic Results** (Task 2)
+   - ContextPicker enhanced with semantic search (300ms debounce)
+   - Results show project badges with colors from .project.midlight
+   - Content snippets with similarity scores for semantic matches
+   - Combines file name fuzzy matching + RAG semantic search
+
+3. **Context Panel Enhancement** (Task 3)
+   - Token budget visualization with progress bar
+   - Color coding: green < 50%, yellow < 80%, red > 80%
+   - Toggle switches per layer type to enable/disable
+   - "Clear all @-mentions" button
+   - Added 'semantic' layer type for RAG-retrieved context
+
+4. **Project Status UI** (Task 4)
+   - Status-based icon colors in sidebar (active: blue, paused: yellow, archived: gray)
+   - Status indicators on project rows (⏸ for paused, 📦 for archived)
+   - Context menu with Active/Paused/Archive status options
+   - Confirmation dialog for archiving
+
+5. **Project Archiving UI** (Task 5)
+   - ArchivedProjectsSection component at sidebar bottom
+   - Shows count of archived projects ("X archived projects")
+   - Collapsible section with restore/delete actions
+   - Delete confirmation dialog for permanent removal
+
+**Files Created (Phase 5):**
+
+| File | Purpose |
+|------|---------|
+| `apps/desktop/src/lib/components/IndexStatusBadge.svelte` | RAG index status indicator |
+| `apps/desktop/src/lib/components/ArchivedProjectsSection.svelte` | Archived projects list |
+
+**Files Modified (Phase 5):**
+
+| File | Changes |
+|------|---------|
+| `packages/stores/src/ai.ts` | Added 'semantic' to ContextLayerType |
+| `apps/desktop/src/App.svelte` | Added autoIndexProjects() function |
+| `apps/desktop/src/lib/components/Sidebar.svelte` | Added IndexStatusBadge, ArchivedProjectsSection |
+| `apps/desktop/src/lib/components/FileContextMenu.svelte` | Added RAG indexing options |
+| `apps/desktop/src/lib/components/Chat/ContextPicker.svelte` | Added semantic search |
+| `apps/desktop/src/lib/components/ContextPanel.svelte` | Added token budget, layer toggles |
+
+**Remaining (Backend Rust):**
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Project scan caching | 🔲 Pending | Add 10s TTL cache to workspace_manager.rs |
+| Incremental RAG indexing | 🔲 Pending | Track file modification times in rag_service.rs |
 
 ---
 
@@ -448,12 +498,12 @@ interface SettingsState {
 | Context Parser | `packages/core/src/context/parser.test.ts` | 7 |
 | Context Updater | `packages/core/src/context/updater.test.ts` | 11 |
 | Workflow Executor | `packages/core/src/workflows/executor.test.ts` | 51 |
-| Workflow Definitions | `packages/core/src/workflows/definitions.test.ts` | 86 |
+| Workflow Definitions | `packages/core/src/workflows/definitions.test.ts` | 62 |
 | File Watcher Store | `packages/stores/src/fileWatcher.test.ts` | 40 |
 | Shortcuts Store | `packages/stores/src/shortcuts.test.ts` | 30 |
 | Toast Store | `packages/stores/src/toast.test.ts` | 33 |
 | Recovery Store | `packages/stores/src/recovery.test.ts` | 40 |
-| **Total** | | **298** |
+| **Total** | | **274** |
 
 ---
 
@@ -500,7 +550,7 @@ interface SettingsState {
 
 ## Appendix A: File Changes Summary
 
-### Files Created (Phases 1-4)
+### Files Created (Phases 1-5)
 
 | File | Purpose |
 |------|---------|
@@ -519,19 +569,24 @@ interface SettingsState {
 | `packages/stores/src/project.ts` | Project state store |
 | `apps/desktop/src/lib/components/WorkflowWizard.svelte` | Interview UI |
 | `apps/desktop/src/lib/components/WorkflowPicker.svelte` | Selection UI |
+| `apps/desktop/src/lib/components/IndexStatusBadge.svelte` | RAG index status indicator |
+| `apps/desktop/src/lib/components/ArchivedProjectsSection.svelte` | Archived projects list |
 
-### Files Modified (Phases 1-4)
+### Files Modified (Phases 1-5)
 
 | File | Changes |
 |------|---------|
 | `packages/core/src/index.ts` | Export context and workflow modules |
 | `packages/stores/src/index.ts` | Export new stores and types |
-| `packages/stores/src/ai.ts` | Layered context, fresh start mode |
+| `packages/stores/src/ai.ts` | Layered context, fresh start mode, semantic layer type |
 | `packages/stores/src/settings.ts` | New context settings fields |
 | `apps/desktop/src-tauri/src/commands/workspace.rs` | Project scanning commands |
 | `apps/desktop/src-tauri/src/lib.rs` | Register new Tauri commands |
-| `apps/desktop/src/App.svelte` | Workflow initialization |
-| `apps/desktop/src/lib/components/Sidebar.svelte` | "New Project..." option |
+| `apps/desktop/src/App.svelte` | Workflow initialization, RAG auto-indexing |
+| `apps/desktop/src/lib/components/Sidebar.svelte` | "New Project...", IndexStatusBadge, ArchivedProjectsSection |
+| `apps/desktop/src/lib/components/FileContextMenu.svelte` | RAG indexing menu options |
+| `apps/desktop/src/lib/components/Chat/ContextPicker.svelte` | Semantic search integration |
+| `apps/desktop/src/lib/components/ContextPanel.svelte` | Token budget, layer toggles |
 
 ---
 
@@ -570,7 +625,7 @@ interface ContextLayer {
   tokenCount?: number;
 }
 
-type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection';
+type ContextLayerType = 'global' | 'project' | 'document' | 'mentioned' | 'selection' | 'semantic';
 
 interface ContextDocument {
   overview: string;
@@ -678,4 +733,4 @@ interface WorkflowExecutionResult {
 
 ---
 
-*Document prepared for the Midlight development team. Phases 1-4 are complete with 298 passing tests. Phase 5 remains for polish and cross-project features.*
+*Document prepared for the Midlight development team. Phases 1-5 are complete with 274 passing tests. Only backend Rust optimizations (project scan caching, incremental RAG indexing) remain.*

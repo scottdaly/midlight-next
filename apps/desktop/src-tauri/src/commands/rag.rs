@@ -112,6 +112,24 @@ pub async fn rag_delete_index(app: AppHandle, project_path: String) -> Result<()
     service.delete_index(&project_path).await.map_err(|e| e.message)
 }
 
+/// Index a single file (for real-time updates)
+#[tauri::command]
+pub async fn rag_index_file(
+    app: AppHandle,
+    project_path: String,
+    file_path: String,
+    auth_token: String,
+) -> Result<(), String> {
+    debug!("rag_index_file: {} in {}", file_path, project_path);
+
+    let service = get_service(&app).await?;
+
+    service
+        .index_file(&project_path, &file_path, &auth_token)
+        .await
+        .map_err(|e| e.message)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

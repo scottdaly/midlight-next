@@ -162,6 +162,33 @@ pub async fn workspace_scan_projects(
 }
 
 #[tauri::command]
+pub async fn workspace_invalidate_project_cache(
+    workspace_root: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let registry = state.workspace_registry.read().await;
+
+    if let Some(manager) = registry.get(&workspace_root) {
+        manager.invalidate_project_cache();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn workspace_refresh_projects(
+    workspace_root: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ProjectInfo>, String> {
+    let registry = state.workspace_registry.read().await;
+
+    if let Some(manager) = registry.get(&workspace_root) {
+        manager.refresh_projects().map_err(|e| e.to_string())
+    } else {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
 pub async fn workspace_is_project(
     workspace_root: String,
     relative_path: String,

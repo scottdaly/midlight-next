@@ -31,6 +31,7 @@ const initialState: RAGState = {
 
 // RAG operations (injected from platform layer)
 export type RAGIndexer = (projectPath: string, force?: boolean) => Promise<IndexStatus>;
+export type RAGFileIndexer = (projectPath: string, filePath: string) => Promise<void>;
 export type RAGSearcher = (query: string, options?: Partial<SearchOptions>) => Promise<SearchResult[]>;
 export type RAGStatusGetter = (projectPath?: string) => Promise<IndexStatus[]>;
 export type RAGIndexDeleter = (projectPath: string) => Promise<void>;
@@ -40,6 +41,7 @@ function createRAGStore() {
 
   // Platform-specific implementations (injected at runtime)
   let indexer: RAGIndexer | null = null;
+  let fileIndexer: RAGFileIndexer | null = null;
   let searcher: RAGSearcher | null = null;
   let statusGetter: RAGStatusGetter | null = null;
   let indexDeleter: RAGIndexDeleter | null = null;
@@ -52,11 +54,13 @@ function createRAGStore() {
      */
     setImplementation(impl: {
       indexer: RAGIndexer;
+      fileIndexer?: RAGFileIndexer;
       searcher: RAGSearcher;
       statusGetter: RAGStatusGetter;
       indexDeleter: RAGIndexDeleter;
     }) {
       indexer = impl.indexer;
+      fileIndexer = impl.fileIndexer ?? null;
       searcher = impl.searcher;
       statusGetter = impl.statusGetter;
       indexDeleter = impl.indexDeleter;
@@ -107,6 +111,23 @@ function createRAGStore() {
           return { ...s, indexStatus: newStatus, error: errorMsg };
         });
         return null;
+      }
+    },
+
+    /**
+     * Index a single file (for incremental updates after file save)
+     */
+    async indexFile(projectPath: string, filePath: string): Promise<void> {
+      if (!fileIndexer) {
+        // File indexer not available - silently skip (graceful degradation)
+        return;
+      }
+
+      try {
+        await fileIndexer(projectPath, filePath);
+      } catch (error) {
+        // Log but don't surface to user - incremental indexing is best-effort
+        console.warn('[RAG] Failed to index file:', filePath, error);
       }
     },
 

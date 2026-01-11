@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use super::checkpoint_manager::{Checkpoint, CheckpointManager};
@@ -50,12 +51,22 @@ pub struct ProjectInfo {
     pub config: ProjectConfig,
 }
 
+/// Cache TTL for project scans (10 seconds)
+const PROJECT_CACHE_TTL: Duration = Duration::from_secs(10);
+
+/// Cached project scan results
+struct ProjectCache {
+    projects: Vec<ProjectInfo>,
+    last_updated: Instant,
+}
+
 /// Manages a single workspace (folder)
 pub struct WorkspaceManager {
     workspace_root: PathBuf,
     midlight_dir: PathBuf,
     object_store: Arc<ObjectStore>,
     checkpoint_manager: Arc<RwLock<CheckpointManager>>,
+    project_cache: std::sync::RwLock<Option<ProjectCache>>,
 }
 
 impl WorkspaceManager {
@@ -71,6 +82,7 @@ impl WorkspaceManager {
             midlight_dir: workspace_root.join(".midlight"),
             object_store,
             checkpoint_manager,
+            project_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -680,10 +692,44 @@ impl WorkspaceManager {
     }
 
     /// Scans workspace for projects (.project.midlight files)
+    /// Uses a cache with 10-second TTL to avoid repeated filesystem traversals
     pub fn scan_projects(&self) -> Result<Vec<ProjectInfo>> {
+        // Check cache first
+        {
+            let cache = self.project_cache.read().unwrap();
+            if let Some(ref cached) = *cache {
+                if cached.last_updated.elapsed() < PROJECT_CACHE_TTL {
+                    return Ok(cached.projects.clone());
+                }
+            }
+        }
+
+        // Cache miss or expired - do full scan
         let mut projects = Vec::new();
         self.scan_projects_recursive(&self.workspace_root, &mut projects)?;
+
+        // Update cache
+        {
+            let mut cache = self.project_cache.write().unwrap();
+            *cache = Some(ProjectCache {
+                projects: projects.clone(),
+                last_updated: Instant::now(),
+            });
+        }
+
         Ok(projects)
+    }
+
+    /// Invalidate the project cache (call when .project.midlight files change)
+    pub fn invalidate_project_cache(&self) {
+        let mut cache = self.project_cache.write().unwrap();
+        *cache = None;
+    }
+
+    /// Force refresh - invalidate cache and re-scan
+    pub fn refresh_projects(&self) -> Result<Vec<ProjectInfo>> {
+        self.invalidate_project_cache();
+        self.scan_projects()
     }
 
     fn scan_projects_recursive(&self, dir: &Path, projects: &mut Vec<ProjectInfo>) -> Result<()> {
